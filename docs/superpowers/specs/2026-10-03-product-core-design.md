@@ -95,6 +95,8 @@ The three states are mutually exclusive. A negócio whose parts are all cancelle
 - Expected month.
 - Stored status: `expected` or `cancelled`.
 - Cancellation reason when cancelled: `negocio_lost`, `manual` or `superseded`.
+  - `negocio_lost` and `manual` mean the entitlement was given up. The part's `expected_base` counts as written off in the total invariant and never appears in a forecast.
+  - `superseded` means the part was replaced by other parts in a split or redistribution. It counts nowhere.
 
 A part is **received** when it has a current valid settlement. "Received" is derived from the settlement and is never stored on the part.
 
@@ -117,7 +119,19 @@ An append-only record that a payment part was received.
 
 The **current valid settlement** of a part is the one that no other settlement supersedes. Earlier ones stay on record.
 
-### 4.5 Expenses
+### 4.5 Commission adjustment
+
+An append-only record that the commission actually due differs from `agent_commission_base`, created only as the explicit resolution of a difference when a part is received or a settlement is corrected (section 6.3).
+
+- Negócio reference.
+- Settlement reference: the settlement whose difference it resolves.
+- Signed amount in cents: negative when the commission was smaller, positive when it was larger.
+
+Only adjustments that belong to a current valid settlement count. When a settlement is superseded, its adjustments stop counting.
+
+The negócio's **effective commission** is `agent_commission_base` plus its counting adjustments. It is what the interface shows as the commission once any adjustment exists.
+
+### 4.6 Expenses
 
 **One-off expense**
 
@@ -135,7 +149,7 @@ The **current valid settlement** of a part is the one that no other settlement s
 
 An append-only record that an expense was paid.
 
-- Reference to the one-off expense, or to the rule and the month of the occurrence.
+- Reference to the one-off expense, or to the rule and the month of the occurrence. Records for one-off expenses and records for recurring occurrences are stored separately, so each kind has a non-null item identity that the database can constrain.
 - Actual date and actual gross amount.
 - Idempotency key.
 - Optional `supersedes_id`.
@@ -220,12 +234,29 @@ protected_money = iva + irs_reserve + ss_reserve + sum(other_reserves)
 ### 6.1 Total invariant
 
 ```text
-sum(actual_base of current valid settlements)
-+ sum(expected_base of active expected parts)
-= agent_commission_base
+agent_commission_base
++ sum(counting commission adjustments)
+=
+  sum(actual_base of current valid settlements)        received
++ sum(expected_base of active expected parts)          outstanding
++ sum(expected_base of parts cancelled as
+      negocio_lost or manual)                          written off
 ```
 
-Cancelled parts are excluded. An active expected part is one with status `expected` and no settlement.
+- An active expected part is one with status `expected` and no settlement.
+- Parts cancelled as `superseded` are excluded.
+- Reconciliation and forecast inclusion are separate. Written-off parts take part in this invariant and in no forecast. Only outstanding parts are forecast money.
+
+Worked cases, for a negócio with an agent share of 1,000.00 EUR:
+
+| Event | Received | Outstanding | Written off | Adjustments | Holds |
+| --- | --- | --- | --- | --- | --- |
+| Created | 0 | 1,000 | 0 | 0 | 1,000 = 1,000 |
+| Marked perdido, nothing received | 0 | 0 | 1,000 | 0 | 1,000 = 1,000 |
+| 400 received, then perdido | 400 | 0 | 600 | 0 | 1,000 = 1,000 |
+| Reopened after that | 400 | 600 | 0 | 0 | 1,000 = 1,000 |
+| 900 received on the only part, commission was smaller | 900 | 0 | 0 | −100 | 900 = 900 |
+| 900 received on the only part, 100 still due | 900 | 100 | 0 | 0 | 1,000 = 1,000 |
 
 ### 6.2 Changing a negócio
 
@@ -236,11 +267,36 @@ When `agency_commission_base` or `agent_share_rate` changes:
 - Any cent remainder goes to the last expected part.
 - When there is no active expected part and the difference is positive, the change requires an expected month and creates a new expected part for the difference.
 - A new total below the received actual total is refused. The agent must make an explicit correction first.
+- Written-off parts and adjustments are untouched by a commission change.
+- A commission change is refused on a `perdido` negócio. It must be reopened first.
+- A commission change that would create an outstanding balance is refused on an archived negócio. It must be unarchived first.
 
-### 6.3 Enforcement
+### 6.3 Resolving a difference on receipt
+
+Receiving an `actual_base` that differs from the part's `expected_base`, or correcting a settlement to a different `actual_base`, leaves a gap in the total invariant. The gap is never resolved implicitly. The agent makes an explicit choice, and the settlement and its resolution are written in the same transaction.
+
+When less was received than expected:
+
+- **"Ainda falta receber":** the difference becomes a new expected part. An expected month is required.
+- **"A comissão foi menor":** a negative commission adjustment for the difference.
+
+When more was received than expected:
+
+- **"Antecipa valores em falta":** the excess is taken from the other active expected parts, the last one first. Any excess beyond the outstanding balance must be resolved as a larger commission.
+- **"A comissão foi maior":** a positive commission adjustment for the excess.
+
+When a settlement is corrected:
+
+- The replacement's adjustments replace those of the superseded settlement, which stop counting.
+- The same explicit choice is made for whatever gap the new `actual_base` leaves, against the parts as they stand at that moment.
+
+No operation commits with a gap. A request that does not carry a resolution for its difference is refused.
+
+### 6.4 Enforcement
 
 - The total invariant is enforced in the database by a deferred constraint trigger that verifies it at commit.
-- Every mutation that can affect the total locks the negócio row first, in the same order: split, edit a part, receive, correct, mark as perdido, reopen, and change commission.
+- Every mutation that can affect the total locks the negócio row first, in the same order: split, edit a part, receive, correct, mark as perdido, reopen, change commission, archive and unarchive.
+- The same trigger enforces that an archived negócio has no active expected part, on every mutation and not only at the moment of archiving.
 
 ## 7. Scenarios, forecast and history
 
@@ -298,10 +354,11 @@ After subscribing:
 
 - **Create:** name, agency commission, share rate (pre-filled), expected month, stage. One part is created for the full agent share. The target is under 60 seconds.
 - **Split:** opens the schedule to add parts and move amounts between them.
-- **Mark as perdido:** active expected parts become `cancelled` with reason `negocio_lost`. Settlements remain. Received amounts stay in history.
+- **Mark as perdido:** active expected parts become `cancelled` with reason `negocio_lost`, which moves their amount from outstanding to written off, so the total invariant holds. Settlements remain. Received amounts stay in history.
 - **Reopen:** only parts cancelled with reason `negocio_lost` return to `expected`. Parts cancelled as `manual` or `superseded` are not revived.
 - **Delete:** only a negócio with no settlements, no expense links and no other history.
 - **Archive:** any other negócio, and only when it has no active expected part. Archiving transactionally rejects a negócio that still holds forecast money. An archived negócio therefore contributes no expected money to the forecast by construction; its settlements stay in actuals and history.
+- **Unarchive:** an explicit action. Any change that would give an archived negócio an outstanding balance (a commission increase, a reopening, a shortfall resolved as still due) is refused until it is unarchived.
 
 ### 8.3 Receiving a part
 
@@ -310,13 +367,14 @@ Receiving is a confirmation boundary.
 1. The screen shows the calculated bank inflow for the part.
 2. The agent confirms the actual payment date and the `actual_base` without IVA. The `actual_base` is the authoritative input.
 3. Optionally the agent enters the observed bank amount. It never drives the calculation. The screen shows calculated inflow, observed inflow and the difference, and a non-zero difference must be acknowledged.
-4. On confirmation the settlement is written with frozen inputs, outputs and engine version.
+4. If the `actual_base` differs from the part's `expected_base`, the agent chooses how the difference is resolved (section 6.3).
+5. On confirmation the settlement and its resolution are written in one transaction, with frozen inputs, outputs and engine version.
 
 Rules:
 
 - A part can be received only on a `confirmado` negócio. On another stage the agent is offered one explicit compound action, "Confirmar negócio e registar recebimento". The stage is never changed silently.
 - After confirmation, profile changes never alter the settlement.
-- A correction is an explicit replacement: a new settlement that supersedes the previous one.
+- A correction is an explicit replacement: a new settlement that supersedes the previous one, for the same payment part, with its own resolution of any difference.
 
 ### 8.4 Expenses
 
@@ -336,16 +394,18 @@ Rules:
 
 ### 9.2 Append-only records
 
-- The application role has only insert and select rights on settlements and paid-expense records.
+- The application role has only insert and select rights on settlements, commission adjustments and paid-expense records.
 - Erasure goes through the system role.
 
 ### 9.3 Uniqueness
 
 - One original settlement per payment part.
 - One direct replacement per record, for settlements and for paid-expense records.
+- A replacement must reference an existing predecessor of the same financial item: a settlement can supersede only a settlement of the same payment part; a paid record can supersede only a paid record of the same one-off expense, or of the same rule and month. This is enforced in the database by composite foreign keys that include the item identity, not only by ownership.
 - One original paid record per one-off expense.
 - One original paid record per recurrence rule and month.
 - No skip and paid record for the same rule and month, enforced by a constraint trigger across the two tables.
+- Skip, confirm, unskip, and unskip-and-confirm are serialised per recurrence rule: each locks the rule row before checking and writing, and the constraint trigger takes the same lock, so the serialisation holds for any code path. Two concurrent transactions can never both see "no conflicting row" and both succeed.
 
 ### 9.4 Idempotency
 
@@ -383,6 +443,11 @@ Invariants:
 - A new total below the received total is refused.
 - Increasing a fully received negócio requires an expected month and creates a new part.
 - The three settlement states are mutually exclusive, including for a negócio with all parts cancelled.
+- The total invariant holds through: perdido with nothing received, partial receipt then perdido, and reopening after each.
+- Receiving less than expected is refused without a resolution; each resolution (still due, smaller commission) commits with the invariant holding.
+- Receiving more than expected: taken from later parts, the last first; excess beyond the outstanding balance requires a larger commission.
+- Correcting a settlement to a different amount stops its old adjustments counting and requires a new resolution.
+- A commission change is refused on a perdido negócio, and leaves written-off parts and adjustments untouched.
 
 Concurrency and idempotency:
 
@@ -395,6 +460,7 @@ Snapshots and corrections:
 
 - Profile changes leave settlements unchanged.
 - Correction chains select exactly one current record, for settlements and for paid expenses.
+- A replacement that references a record of a different payment part, expense or occurrence, or a predecessor that does not exist, is rejected by the database.
 - A changed engine version does not recompute existing settlements.
 
 Scenarios and ranges:
@@ -410,6 +476,7 @@ Negócio lifecycle:
 - Settlements and paid expenses of a perdido or archived negócio still appear in actuals and history.
 - Reopening revives only `negocio_lost` parts.
 - Archive is rejected while forecast money exists.
+- A commission increase, a reopening, and a shortfall resolved as still due are each refused on an archived negócio until it is unarchived; the database rejects an archived negócio with an active expected part from any path.
 - Delete is rejected when history exists.
 - Receiving on a non-confirmado negócio requires the compound action.
 
@@ -417,12 +484,13 @@ Expenses:
 
 - Occurrence states, the bulk confirm, skips and replacements.
 - An occurrence cannot be both skipped and paid; "unskip and confirm" is atomic.
+- A skip and a payment for the same occurrence submitted concurrently end with exactly one of them.
 - A one-off expense cannot have two original paid records.
 - A linked expense is still counted after the negócio is perdido.
 
 Database guards:
 
-- The application role cannot update or delete a settlement or a paid-expense record.
+- The application role cannot update or delete a settlement, a commission adjustment or a paid-expense record.
 - Cross-owner child insertion is rejected.
 - Both isolation layers hold for every table.
 - The deferred trigger rejects a commit that breaks the total invariant, including from a path that bypasses the services.
