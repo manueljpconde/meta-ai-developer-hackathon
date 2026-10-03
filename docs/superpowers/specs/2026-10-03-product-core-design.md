@@ -121,15 +121,18 @@ The **current valid settlement** of a part is the one that no other settlement s
 
 ### 4.5 Commission adjustment
 
-An append-only record that the commission actually due differs from `agent_commission_base`, created only as the explicit resolution of a difference when a part is received or a settlement is corrected (section 6.3).
+An append-only record that the commission actually due differs from `agent_commission_base`, created only as the explicit resolution of a residual when a part is received or a settlement is corrected (section 6.3).
 
 - Negócio reference.
-- Settlement reference: the settlement whose difference it resolves.
+- Settlement reference: the settlement whose residual it resolves.
 - Signed amount in cents: negative when the commission was smaller, positive when it was larger.
+- The adjustment's negócio must be the negócio of its settlement's payment part. This is enforced in the database.
+
+An adjustment records an explicitly agreed difference. It is never an automatic balancing entry.
 
 Only adjustments that belong to a current valid settlement count. When a settlement is superseded, its adjustments stop counting.
 
-The negócio's **effective commission** is `agent_commission_base` plus its counting adjustments. It is what the interface shows as the commission once any adjustment exists.
+The negócio's **effective commission** is `agent_commission_base` plus its counting adjustments. Once any adjustment exists, the interface shows the derived share, the adjustment and the effective commission as three separate figures.
 
 ### 4.6 Expenses
 
@@ -260,37 +263,66 @@ Worked cases, for a negócio with an agent share of 1,000.00 EUR:
 
 ### 6.2 Changing a negócio
 
-When `agency_commission_base` or `agent_share_rate` changes:
+When `agency_commission_base` or `agent_share_rate` changes, the outstanding balance is recalculated from everything that is preserved:
 
-- Received actual bases remain untouched.
-- The remaining difference is distributed across active expected parts.
-- Any cent remainder goes to the last expected part.
-- When there is no active expected part and the difference is positive, the change requires an expected month and creates a new expected part for the difference.
-- A new total below the received actual total is refused. The agent must make an explicit correction first.
-- Written-off parts and adjustments are untouched by a commission change.
+```text
+new_outstanding =
+    new_agent_commission_base
+    + counting_adjustments
+    - received
+    - written_off
+```
+
+- Settlements, counting adjustments and written-off parts are never touched by a commission change.
+- **Negative result:** the change is refused. Comparing the new total with the received amount alone is not the rule. Example: 400 received and 600 written off manually cannot accommodate a new total of 800, because `800 − 400 − 600 = −200`.
+- **Positive result:** it is distributed across the active expected parts, with any cent remainder on the last one. When there is no active expected part, the change requires an expected month and creates a new expected part for the amount.
+- **Zero result:** any active expected parts are cancelled as `superseded`.
 - A commission change is refused on a `perdido` negócio. It must be reopened first.
-- A commission change that would create an outstanding balance is refused on an archived negócio. It must be unarchived first.
+- A commission change that would leave an outstanding balance is refused on an archived negócio. It must be unarchived first.
 
-### 6.3 Resolving a difference on receipt
+### 6.3 Resolving a residual
 
-Receiving an `actual_base` that differs from the part's `expected_base`, or correcting a settlement to a different `actual_base`, leaves a gap in the total invariant. The gap is never resolved implicitly. The agent makes an explicit choice, and the settlement and its resolution are written in the same transaction.
+Receiving a part, or correcting a settlement, can leave the total invariant unbalanced. The imbalance is the **residual**. It is always calculated from the current state of the whole negócio, never from the difference between one part's expected and actual base:
 
-When less was received than expected:
+```text
+residual =
+    agent_commission_base
+    + counting_adjustments
+    - received
+    - outstanding
+    - written_off
+```
 
-- **"Ainda falta receber":** the difference becomes a new expected part. An expected month is required.
-- **"A comissão foi menor":** a negative commission adjustment for the difference.
+It is calculated after the operation's own effect is applied:
 
-When more was received than expected:
+- **Receipt:** the part leaves outstanding and its `actual_base` joins received.
+- **Correction:** the replacement's `actual_base` replaces the superseded one in received, and the superseded settlement's adjustments are excluded from `counting_adjustments`.
 
-- **"Antecipa valores em falta":** the excess is taken from the other active expected parts, the last one first. Any excess beyond the outstanding balance must be resolved as a larger commission.
-- **"A comissão foi maior":** a positive commission adjustment for the excess.
+A residual of zero needs no resolution. Otherwise the agent resolves it explicitly, and the settlement and its resolution are written in the same transaction. A request that leaves a non-zero residual without a resolution is refused. An adjustment is never created automatically to balance the invariant.
 
-When a settlement is corrected:
+**Positive residual** (more is due than is accounted for):
 
-- The replacement's adjustments replace those of the superseded settlement, which stop counting.
-- The same explicit choice is made for whatever gap the new `actual_base` leaves, against the parts as they stand at that moment.
+- **"Ainda falta receber":** the residual is added to outstanding, as a new expected part with an expected month.
+- **"A comissão foi menor":** a negative commission adjustment for the residual.
 
-No operation commits with a gap. A request that does not carry a resolution for its difference is refused.
+**Negative residual** (more is accounted for than is due):
+
+- **"Antecipa valores em falta":** the outstanding balance is reduced by the residual, the last expected part first. A part reduced to zero is cancelled as `superseded`. This option is offered only up to the outstanding balance; any remainder must be resolved as a larger commission.
+- **"A comissão foi maior":** a positive commission adjustment for the residual.
+
+**Source values were wrong:** in either direction the agent can instead correct the negócio's commission or percentage in the same transaction, under section 6.2. Adjustments are for the case where those inputs are right and the amount due genuinely differs. Any residual that remains afterwards is resolved by the options above.
+
+Worked cases, starting from one part of 1,000.00 EUR:
+
+| Step | Received | Outstanding | Adjustments | Residual before resolution | Resolution |
+| --- | --- | --- | --- | --- | --- |
+| Receive 900 | 900 | 0 | 0 | +100 | Still due: outstanding becomes 100 |
+| Correct that receipt to 950 | 950 | 100 | 0 | −50 | Outstanding reduced to 50 |
+| Instead: the 100 part is received, then the first receipt is corrected to 950 | 1,050 | 0 | 0 | −50 | Only a larger commission (+50) is possible, or a source correction |
+| Receive 900, resolved as smaller commission | 900 | 0 | −100 | 0 after resolution | Adjustment of −100 |
+| Correct only the date of that receipt | 900 | 0 | −100 carried forward | 0 | No new choice |
+
+**Corrections that do not change the amount.** When a replacement has the same `actual_base` as the settlement it supersedes, the superseded settlement's adjustments are carried forward: identical adjustments are recorded against the replacement in the same transaction, the effective commission is unchanged, and the agent is not asked to choose again.
 
 ### 6.4 Enforcement
 
@@ -367,14 +399,14 @@ Receiving is a confirmation boundary.
 1. The screen shows the calculated bank inflow for the part.
 2. The agent confirms the actual payment date and the `actual_base` without IVA. The `actual_base` is the authoritative input.
 3. Optionally the agent enters the observed bank amount. It never drives the calculation. The screen shows calculated inflow, observed inflow and the difference, and a non-zero difference must be acknowledged.
-4. If the `actual_base` differs from the part's `expected_base`, the agent chooses how the difference is resolved (section 6.3).
+4. If the receipt leaves a non-zero residual, the agent chooses how it is resolved (section 6.3).
 5. On confirmation the settlement and its resolution are written in one transaction, with frozen inputs, outputs and engine version.
 
 Rules:
 
 - A part can be received only on a `confirmado` negócio. On another stage the agent is offered one explicit compound action, "Confirmar negócio e registar recebimento". The stage is never changed silently.
 - After confirmation, profile changes never alter the settlement.
-- A correction is an explicit replacement: a new settlement that supersedes the previous one, for the same payment part, with its own resolution of any difference.
+- A correction is an explicit replacement: a new settlement that supersedes the previous one, for the same payment part, with its own resolution of any residual.
 
 ### 8.4 Expenses
 
@@ -440,14 +472,21 @@ Invariants:
 
 - Property tests apply random sequences of split, edit, receive, lose, reopen, correct and commission change, then assert the total invariant and that settlements never change.
 - The cent remainder goes to the last expected part.
-- A new total below the received total is refused.
 - Increasing a fully received negócio requires an expected month and creates a new part.
 - The three settlement states are mutually exclusive, including for a negócio with all parts cancelled.
 - The total invariant holds through: perdido with nothing received, partial receipt then perdido, and reopening after each.
-- Receiving less than expected is refused without a resolution; each resolution (still due, smaller commission) commits with the invariant holding.
-- Receiving more than expected: taken from later parts, the last first; excess beyond the outstanding balance requires a larger commission.
-- Correcting a settlement to a different amount stops its old adjustments counting and requires a new resolution.
-- A commission change is refused on a perdido negócio, and leaves written-off parts and adjustments untouched.
+- A receipt or correction that leaves a non-zero residual is refused without a resolution; no adjustment is ever created automatically.
+- Positive residual: each resolution (still due, smaller commission) commits with the invariant holding.
+- Negative residual: taken from the outstanding balance, the last part first; a remainder beyond the outstanding balance requires a larger commission.
+- Residual, not expected-versus-actual: 1,000 expected, 900 received with 100 still due, then corrected to 950, reduces the outstanding part to 50.
+- The same correction after the 100 part has itself been received offers only a larger commission or a source correction.
+- A date-only correction carries the adjustment forward, leaves the effective commission unchanged and asks for no new choice.
+- Correcting a settlement to a different amount stops its old adjustments counting and resolves the new residual.
+- Resolving a residual by correcting the commission or percentage applies the section 6.2 calculation in the same transaction.
+- Commission change: `new_outstanding` is calculated from the new share, counting adjustments, received and written off; 400 received plus 600 written off rejects a new total of 800.
+- Commission change: a positive result is redistributed or creates a part; a zero result cancels the expected parts as superseded.
+- A commission change is refused on a perdido negócio, and never touches settlements, written-off parts or adjustments.
+- An adjustment whose negócio differs from its settlement's is rejected by the database.
 
 Concurrency and idempotency:
 
