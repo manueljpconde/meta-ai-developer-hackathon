@@ -303,12 +303,12 @@ A residual of zero needs no resolution. Otherwise the agent resolves it explicit
 **Positive residual** (more is due than is accounted for):
 
 - **"Ainda falta receber":** the residual is added to outstanding, as a new expected part with an expected month.
-- **"A comissão foi menor":** a negative commission adjustment for the residual.
+- **"A comissão foi menor":** a commission adjustment of `-residual`, which is negative.
 
 **Negative residual** (more is accounted for than is due):
 
-- **"Antecipa valores em falta":** the outstanding balance is reduced by the residual, the last expected part first. A part reduced to zero is cancelled as `superseded`. This option is offered only up to the outstanding balance; any remainder must be resolved as a larger commission.
-- **"A comissão foi maior":** a positive commission adjustment for the residual.
+- **"Antecipa valores em falta":** the outstanding balance is reduced by `abs(residual)`, the last expected part first. A part reduced to zero is cancelled as `superseded`. This option is offered only up to the outstanding balance; any remainder must be resolved as a larger commission.
+- **"A comissão foi maior":** a commission adjustment of `-residual`, which is positive.
 
 **Source values were wrong:** in either direction the agent can instead correct the negócio's commission or percentage in the same transaction, under section 6.2. Adjustments are for the case where those inputs are right and the amount due genuinely differs. Any residual that remains afterwards is resolved by the options above.
 
