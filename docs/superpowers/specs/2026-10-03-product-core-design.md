@@ -230,7 +230,7 @@ protected_money = iva + irs_reserve + ss_reserve + sum(other_reserves)
 | Protected money | "Dinheiro a proteger" | Sum of `protected_money`, shown broken down |
 | Really available | "É realmente teu" | Section 5.2 |
 
-"Entrará na conta" and "é realmente teu" are never the same number under the same label.
+Bank inflow and really available are distinct concepts, always shown with separate labels, even when their numerical values coincide.
 
 ## 6. Invariants on payment parts
 
