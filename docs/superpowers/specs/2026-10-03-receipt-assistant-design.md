@@ -149,7 +149,7 @@ Implementation gate: a real Portal fatura-recibo PDF, supplied by the product ow
 
 ### 4.5 Assistant UI
 
-- Copy sheet for a received payment, with one copy action per field and a link to "Faturas e Recibos" on the Portal.
+- Copy sheet for a received payment, with one copy action per field and a link to "Faturas e Recibos" on the Portal. Each value is shown beside the Portal's own field label, in Portuguese, whatever the interface language (foundation, section 14.4).
 - Confirm step: by hand or by upload.
 - Missing-receipts list.
 
