@@ -48,7 +48,7 @@ Out of scope:
 - PostgreSQL.
 - A queue worker and the scheduler.
 - Cashier Paddle for billing.
-- Interface and emails in European Portuguese.
+- Interface and emails in Portuguese, English and French (section 14).
 - Money is stored as integer cents everywhere.
 
 ### 3.1 Two kinds of table
@@ -214,7 +214,7 @@ Rules:
 
 - A single middleware on every agent route enforces the phase.
 - In read-only, every mutation of agent data, every export and every file download is rejected server-side. Hiding controls in the interface is not the enforcement.
-- Billing and authentication are explicit exceptions in every phase: opening a checkout, renewing, signing in and signing out stay available. They touch platform data only. Updating the payment method applies to a live subscription, so it is available while Active, including while past due.
+- Billing, authentication and the language preference are explicit exceptions in every phase listed above: opening a checkout, renewing, signing in, signing out and changing the language stay available. None of them is available to an account in the erasing state (section 9.2). They touch platform data only. Updating the payment method applies to a live subscription, so it is available while Active, including while past due.
 - In locked and marked, no agent data is served.
 - Renewal in any phase before erasure creates a new subscription. Once it is admitted, the phase follows the new subscription, full access is restored and the deletion mark is cleared. Renewal never overwrites the ended subscription's row; legitimate late Paddle updates to that row are still applied.
 - Erasure of a marked account is performed only by an admin, manually. There is no automatic erasure.
@@ -449,3 +449,101 @@ Two facts about Paddle must be validated in its sandbox before the dependent wor
 - Displayed prices include VAT.
 - Hosting is in an EU region.
 - Backups are daily, encrypted and kept for 30 days.
+
+## 14. Localisation
+
+This section replaces the earlier decision that the interface and emails are in European Portuguese only. The product is available in Portuguese, English and French from the pilot launch.
+
+### 14.1 Languages and selection
+
+- Locales: `pt-PT`, `en-GB` and `fr-FR`.
+- An explicit selection always wins over browser detection.
+- **Browser matching.** The browser's preferred languages are matched by language family, in the browser's order of preference: any English variant (for example `en-US`) selects `en-GB`, any French variant (for example `fr-CA`) selects `fr-FR`, and any Portuguese variant (for example `pt-BR`) selects `pt-PT`.
+- **Final fallback.** With no supported language among the browser's preferences, or no browser preference at all, the locale is `pt-PT`. This is the choice of a locale. It is separate from the rule in section 14.8 that a missing translation never falls back to Portuguese.
+- The browser language only initialises the choice, on the first visit. It never overwrites an explicit selection or a saved preference.
+- **Before sign-in.** There is a visible language switch. The magic-link email and the page the link opens use the language explicitly selected on the sign-in page, or the browser-matched language when none was selected.
+- **An unauthenticated request never changes an existing account's saved preference.** Requesting a magic link in another language changes only that email and that landing page.
+- **After successful authentication,** an explicit selection made on the sign-in page becomes the agent's saved preference. A language that was only detected from the browser does not.
+- **Saved preference.** It is stored per agent and used for the interface after sign-in and for every email not tied to a sign-in request, including the lifecycle emails.
+- Changing the language is allowed in the no-subscription, active, read-only, locked and marked phases. It changes an account preference, not agent data, and is an explicit exception alongside billing and authentication in section 7.2.
+- That exception does not extend to an account undergoing erasure. From the moment an agent enters the erasing state, the prohibition in section 9.2 is authoritative and every agent operation is refused, including a language change.
+- The admin panel has one language.
+
+### 14.2 What a language change can never do
+
+- Language affects presentation and input only. It never changes a stored value or a calculation result: not an amount, a rate, a fiscal setting, or the date or month assigned to any negócio, payment part, settlement, expense or receipt.
+- Stages, states, reasons and every other stored classification are stored as language-neutral codes, never as translated text.
+- Text typed by the agent is never translated.
+
+### 14.3 Formatting
+
+Currency is always EUR. Amounts are stored as integer cents, and only their display varies: the stored value `500050` is shown as `5 000,50 €` in Portuguese and French and as `€5,000.50` in English.
+
+| | pt-PT | en-GB | fr-FR |
+| --- | --- | --- | --- |
+| Amount, displayed | 5 000,50 € | €5,000.50 | 5 000,50 € |
+| Amount, while editing | 5000,50 | 5000.50 | 5000,50 |
+| Percentage, while editing | 12,5 | 12.5 | 12,5 |
+| Short date | 14/11/2026 | 14/11/2026 | 14/11/2026 |
+| Long date | 14 de novembro de 2026 | 14 November 2026 | 14 novembre 2026 |
+| Month | novembro de 2026 | November 2026 | novembre 2026 |
+| Decimal separator on input, amounts and percentages | comma | point | comma |
+
+Numeric input, for amounts and for percentages alike (a reserve entered as `12,5` has the same protections as an amount):
+
+- While editing, a field holds only digits and the selected locale's decimal separator. Thousands separators and the currency or percent symbol are not part of the input; the symbol is shown beside the field.
+- Input that contains a thousands separator, a symbol, or the other locale's decimal separator is invalid or ambiguous, and is rejected rather than interpreted. It is never silently cleaned up.
+- Leading and trailing whitespace is trimmed. Internal spaces are never removed: ` 5000,50 ` is accepted, and `5 000,50` requires correction.
+- The correction message is helpful and localised, with an example in the agent's locale: "Introduz o valor sem separadores de milhares: 5000,50." in Portuguese, and the equivalent with `5000.50` in English and `5000,50` in French.
+- The text the agent entered is preserved in the field so that they can correct it.
+- Percentages are stored and applied as exact decimals, never as floating-point numbers.
+- The server parses a number by the locale declared with the form. It never guesses the separator.
+- If the agent switches language while a form holds numbers, values already parsed are kept and redisplayed in the new format. Text that was not yet parsed is never reinterpreted silently: the agent is asked to correct it.
+
+### 14.4 Terminology
+
+- Portuguese fiscal terms stay in Portuguese in every language: IVA, retenção na fonte, NIF, fatura-recibo, Segurança Social, Portal das Finanças.
+- Each of those terms has a translated explanation that is available on demand wherever the term appears, not only on first use.
+- On the receipt copy sheet, the Portal's own field labels are shown in Portuguese in every language.
+- Each product concept has one glossary entry per language, kept in the UX spec. A concept never has two names, but grammatical variations of its term are allowed so that sentences read naturally.
+
+### 14.5 Translated surfaces
+
+- Authored interface text, validation and error messages, emails and legal pages are provided in all three languages.
+- Paddle's checkout overlay, Paddle's own emails and Paddle's customer portal are separate localisation surfaces, controlled by Paddle. Which languages they support and how they are selected is verified during integration. The app does not promise that the agent's preference controls them.
+
+### 14.6 Legal pages
+
+- The Portuguese version is the source from which the other two are drafted.
+- Which version prevails, and the wording of any notice on the translations, is **open, pending legal review** for the actual market and contractual relationship. This spec does not conclude that the Portuguese version is binding and the translations are for convenience only. A disclaimer is not a substitute for terms the agent can understand.
+
+### 14.7 Linguistic validation
+
+- English and French wording is linguistically unvalidated until reviewed by fluent speakers. This is separate from usability testing with agents.
+- Review priority: financial labels, free-month and cancellation wording, irreversible actions, and error recovery.
+
+### 14.8 Testing
+
+- Key parity: a key missing in any of the three languages fails the build. There is no silent fallback to Portuguese in production. Parity proves completeness, not translation quality.
+- Interpolation and plurals: every message with parameters or counts is rendered in each language with representative values.
+- Server validation messages are localised and are tested in each language.
+- Hard-coded text: an architecture test fails the build on authored, user-facing application strings outside the translation files. Explicit exceptions: the agent's own content, identifiers and codes, and the preserved Portuguese fiscal and Portal terminology.
+- Number parsing, for amounts and percentages: each locale's valid, ambiguous and malformed inputs; `12,5` as a percentage in each locale; input with a thousands separator or a symbol is rejected with the localised example and the entered text preserved; ` 5000,50 ` is accepted and `5 000,50` is not; a language switch mid-form keeps parsed values and never reinterprets unparsed text.
+- Display: the stored value `500050` renders as `5 000,50 €` in Portuguese and French and `€5,000.50` in English, and is unchanged by rendering or by a language switch.
+- A percentage such as 12,5 % round-trips exactly through input, storage and display in each locale.
+- Browser matching: `en-US` selects `en-GB`, `fr-CA` selects `fr-FR`, `pt-BR` selects `pt-PT`; an unsupported language and an absent preference select `pt-PT`; the browser's order of preference is respected.
+- Selection: an explicit choice survives sign-in through the magic link; browser language does not overwrite a saved preference.
+- Existing account, other language: an agent whose saved preference is Portuguese requests a magic link from a sign-in page explicitly set to French. The email and the landing page are in French; the saved preference is unchanged by the request; after successful authentication the explicit French selection becomes the saved preference; and a lifecycle email sent before that authentication is in Portuguese.
+- The same sign-in with French only detected from the browser leaves the saved Portuguese preference unchanged after authentication.
+- A language change leaves every stored amount, setting, date and month unchanged, and is possible in the read-only, locked and marked phases.
+- A language change is refused for an agent in the erasing state.
+- Layout: every screen is checked in all three languages for truncation and overflow.
+- Emails are sent in the agent's language, including each lifecycle email.
+
+### 14.9 Outstanding
+
+Localisation is not complete until each of these is closed. None is settled by this spec.
+
+- **Legal review** of which version of the legal pages prevails and of the notices on the translations (section 14.6).
+- **Linguistic review** of the English and French wording by fluent speakers (section 14.7).
+- **Paddle verification** of the languages its checkout overlay, emails and customer portal support, and of how they are selected (section 14.5).

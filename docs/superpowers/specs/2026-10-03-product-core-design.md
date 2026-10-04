@@ -41,6 +41,7 @@ Out of scope:
 
 - EUR only.
 - Money is integer cents. Floating-point arithmetic is prohibited for money.
+- Rates and percentages are stored and applied as exact decimals, never as floating-point numbers.
 - Rounding is half-up to the cent, applied at the component boundaries defined in section 5.
 - Reserve rates are between 0% and 100%.
 - IVA and retenção settings each hold applicability and a rate, not only a boolean.
@@ -231,6 +232,8 @@ protected_money = iva + irs_reserve + ss_reserve + sum(other_reserves)
 | Really available | "É realmente teu" | Section 5.2 |
 
 Bank inflow and really available are distinct concepts, always shown with separate labels, even when their numerical values coincide.
+
+The labels in this table, and the other Portuguese interface labels quoted in this spec, are the `pt-PT` wording of glossary concepts. Their English and French wording is kept in the UX spec's glossary (foundation, section 14). Stages, states, reasons and resolution choices are stored as language-neutral codes.
 
 ## 6. Invariants on payment parts
 
