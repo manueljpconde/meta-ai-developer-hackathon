@@ -91,7 +91,7 @@ Three database roles:
 
 Paddle webhooks touch only platform tables, so they run on the application role with no agent in context.
 
-The system role is used through a separate database connection that only the admin panel and the named system jobs reference. The named system jobs are the lapse lifecycle job, erasure, and erasure reconciliation.
+The system role is used through a separate database connection that only the admin panel and the named system jobs reference. The named system jobs are the lapse lifecycle job, erasure, erasure reconciliation, and receipt file cleanup (defined in the receipt assistant spec).
 
 ## 5. Accounts and sign-in
 
@@ -261,14 +261,14 @@ Erasure is performed by an admin, on the agent's request or for a marked account
 
 Cancelling at Paddle, deleting files and deleting rows cannot be one transaction, so erasure is a resumable process driven by an **erasure operation** record.
 
-The erasure operation is stored independently of the agent, with no foreign key to it, so it survives the agent's deletion. It holds the opaque agent identifier, the Paddle customer and subscription identifiers, the progress of each step, and any payments to reconcile. It holds no other data about the agent.
+The erasure operation is stored independently of the agent, with no foreign key to it, so it survives the agent's deletion. It holds the opaque agent identifier, the agent's opaque storage prefix, the Paddle customer and subscription identifiers, the progress of each step, and any payments to reconcile. It holds no other data about the agent.
 
 Steps:
 
 1. **Open the operation.** In one transaction, create the erasure operation and put the agent in the erasing state, with an audit entry. From this point sign-in, checkout, renewal and every agent operation are refused, and existing sessions and tokens are revoked.
 2. **Record it outside the database.** The operation is written durably to a store outside the database. No destructive step runs until this write is confirmed.
 3. **Cancel at Paddle immediately.** Any live subscription is cancelled with immediate effect, not at period end. The step completes only when Paddle confirms the cancelled state.
-4. **Delete stored files.**
+4. **Delete stored files.** Every upload of the agent is first proven closed, so that no write can still succeed under the agent's storage prefix. Every object under the prefix is then deleted, and the prefix is verified empty before completion is marked in step 6. Elapsed time is never taken as proof that a write has stopped.
 5. **Delete database rows** in one agent-scoped transaction on the system role: agent data, sessions, tokens, billing mirror rows and the agent. The same transaction marks the operation's data as deleted.
 6. **Mark completion** in the off-database record.
 
