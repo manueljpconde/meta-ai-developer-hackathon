@@ -53,8 +53,13 @@ A função é pública e não distingue quem escreve. O que existe são travões
 
 ## Reversão da publicação
 
-O deployment de produção anterior aos comentários é `agentimo-demo-idmh28ike-crmware.vercel.app` (`dpl_JAv4iqBXcZAvePqggChMMThTZTHm`, de 5 de outubro de 2026): a demonstração sem o botão «Comentar este ecrã».
+Está em produção o deployment `agentimo-demo-jcuz2dpqq-crmware.vercel.app` (`dpl_4Nf5btapBVankd1UfTpUx3nbYuEc`, de 5 de outubro de 2026), construído a partir do commit `97d08ea`.
 
-    vercel rollback agentimo-demo-idmh28ike-crmware.vercel.app --scope crmware
+Há dois deployments anteriores para onde se pode voltar:
+
+- `agentimo-demo-pionfgjzj-crmware.vercel.app`: a demonstração com os comentários, antes das correções da revisão independente (leitura do corpo até ao limite, dependência fixada).
+- `agentimo-demo-idmh28ike-crmware.vercel.app` (`dpl_JAv4iqBXcZAvePqggChMMThTZTHm`): a demonstração sem o botão «Comentar este ecrã».
+
+    vercel rollback <endereço do deployment> --scope crmware
 
 A reversão repõe a aplicação e não toca nas lojas: os comentários já recebidos ficam guardados. O progresso dos visitantes não é afetado, porque o endereço e a versão dos dados são os mesmos.
