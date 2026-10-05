@@ -1,0 +1,3 @@
+# Pasta pública montada por prototype/publicar.sh e ligação local à Vercel
+prototype/.publicar/
+.vercel/

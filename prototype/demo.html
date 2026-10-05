@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Agentimo — demonstração</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="historia">
+<div id="app" v-cloak>
+
+  <!-- ENTRADA: duas escolhas, sem página de marketing -->
+  <main v-if="modo==='entrada'" class="entrada">
+    <h1 tabindex="-1" data-foco>Agentimo</h1>
+    <p>Para agentes imobiliários: ver quanto vai entrar na conta, quanto é preciso proteger e quanto é realmente seu.</p>
+    <aside class="demo" v-if="demo==='api'">
+      <strong>Protótipo para apreciação pela API Portugal</strong><br>
+      Demonstração com dados fictícios, preparada pela <a href="https://crmware.pt" target="_blank" rel="noopener noreferrer">CrmWare</a> para recolher feedback. Não representa uma aprovação institucional.
+    </aside>
+    <button class="escolha" @click="escolher('seis')">
+      <strong>Ver seis meses de atividade</strong>
+      <span class="nota">Recomendado para começar. Um exemplo preenchido, para consultar.</span>
+    </button>
+    <button class="escolha" @click="escolher('jornada')">
+      <strong>Experimentar do início ao fim</strong>
+      <span class="nota">Visita guiada em sete passos, a partir de uma conta vazia.</span>
+    </button>
+    <p class="nota">Todos os dados são fictícios. Cada demonstração guarda o seu próprio progresso.</p>
+  </main>
+
+  <div v-else class="palco" :class="{ 'sem-guia': !guiaVisivel }">
+
+    <!-- BARRA DA DEMONSTRAÇÃO: sempre visível, fora da aplicação, mesmo com o guia oculto -->
+    <div class="demo-barra" role="region" aria-label="Demonstração">
+      <p class="demo-barra-titulo">Demonstração · dados preparados</p>
+      <p class="demo-barra-nota" v-if="notaCurta" role="status">{{ notaCurta }}</p>
+      <div class="demo-barra-acoes" v-if="!aRecomecar">
+        <button class="link" @click="mostrarGuia(!guiaVisivel)">{{ guiaVisivel ? 'Ocultar guia' : 'Mostrar guia' }}</button>
+        <button class="link" @click="escolher('entrada')">Mudar de demonstração</button>
+        <button class="link" @click="aRecomecar=true">Recomeçar</button>
+        <button class="link" v-if="comentariosUrl" ref="botaoComentar" @click="abrirComentario">Comentar este ecrã</button>
+      </div>
+      <div class="demo-barra-acoes" v-else role="alert">
+        <span>Recomeçar repõe esta demonstração no início. A outra não é alterada.</span>
+        <button class="link" @click="recomecar">Sim, recomeçar</button>
+        <button class="link" @click="aRecomecar=false">Cancelar</button>
+      </div>
+    </div>
+
+    <!-- COMENTAR ESTE ECRÃ: pertence à demonstração, não à aplicação. -->
+    <dialog class="comentario" ref="dialogoComentario" aria-labelledby="comentario-titulo" @close="aoFecharComentario">
+      <div class="comentario-topo">
+        <h2 id="comentario-titulo">Comentar este ecrã</h2>
+        <button class="link" @click="fecharComentario">Fechar</button>
+      </div>
+      <p class="comentario-contexto"><strong>Sobre:</strong> {{ comentario.contexto }}</p>
+      <template v-if="comentario.estado !== 'enviado'">
+        <div class="comentario-outro" v-if="comentario.atual !== comentario.contexto && comentario.estado !== 'desconhecido' && comentario.estado !== 'a_enviar'">
+          <p>Este rascunho é sobre outro ecrã. Está agora em: {{ comentario.atual }}</p>
+          <button class="link" @click="passarComentarioParaEcraAtual">Passar o rascunho para o ecrã atual</button>
+        </div>
+        <label for="comentario-texto">A sua opinião</label>
+        <textarea id="comentario-texto" v-model="comentario.texto" rows="5" maxlength="2000" @input="aoEditarComentario"
+          :disabled="comentario.estado==='a_enviar' || comentario.estado==='desconhecido'"
+          :aria-invalid="!!comentario.erro" aria-describedby="comentario-limite comentario-aviso comentario-erro"></textarea>
+        <p class="nota" id="comentario-limite">Até 2 000 caracteres. Escritos: {{ comentario.texto.length }}.</p>
+        <p class="erro" id="comentario-erro" role="alert" v-if="comentario.erro">{{ comentario.erro }}</p>
+        <p class="nota" id="comentario-aviso">Enviamos este texto e o contexto acima. Não pedimos o seu nome nem o seu email. O alojamento regista dados técnicos do pedido, como o endereço IP, durante um período limitado. O rascunho perde-se se recarregar a página.</p>
+        <div class="comentario-acoes">
+          <button class="botao" @click="enviarComentario" :disabled="comentario.estado==='a_enviar'">
+            {{ comentario.estado==='a_enviar' ? 'A enviar…' : (comentario.estado==='falhou' || comentario.estado==='desconhecido' ? 'Tentar novamente' : 'Enviar opinião') }}
+          </button>
+        </div>
+        <div class="comentario-pendente" v-if="comentario.estado==='desconhecido'">
+          <p>O comentário anterior pode já ter sido recebido. Continuar inicia um novo comentário.</p>
+          <button class="link" @click="iniciarNovoComentario">Iniciar um novo comentário</button>
+        </div>
+      </template>
+      <p v-else class="toast" role="status">Opinião enviada. Obrigado.</p>
+    </dialog>
+
+    <!-- GUIA: fora da aplicação. Só navega e explica; nunca guarda nem confirma nada. -->
+    <aside class="guia-painel" v-if="guiaVisivel" aria-label="Guia da demonstração">
+      <div class="guia-cabecalho">
+        <p class="guia-titulo">Guia · não faz parte da aplicação</p>
+        <button class="link so-telemovel" @click="guiaAberta = !corpoAberto" :aria-expanded="corpoAberto">{{ corpoAberto ? 'Menos ▴' : 'Mais ▾' }}</button>
+      </div>
+      <div class="guia-linha" v-if="emGuia && noDestino">
+        <button class="link" :disabled="n===1" @click="irN(n-1)" aria-label="Anterior">‹ Anterior</button>
+        <p aria-live="polite"><strong>{{ seis ? 'Ponto' : 'Passo' }} {{ n }} de {{ total }}.</strong> {{ fraseGuia }}</p>
+        <button class="link" v-if="n < total || seis" @click="irN(n+1)" aria-label="Seguinte">{{ seis && n===3 ? 'Explorar ›' : 'Seguinte ›' }}</button>
+        <span v-else class="link" aria-hidden="true"></span>
+      </div>
+      <div class="guia-linha" v-else-if="emGuia">
+        <p aria-live="polite"><strong>Estás a explorar livremente.</strong></p>
+        <button class="link" @click="irDestino">Retomar visita ›</button>
+      </div>
+      <p class="guia-modo" v-else>Exploração livre: histórico, despesas e recibos.</p>
+      <p class="guia-falta" v-if="falta && noDestino"><button class="link" @click="irN(falta.passo)">Ir ao passo {{ falta.passo }} ›</button></p>
+      <p class="guia-curta" v-if="curta && vista==='previsao' && !ultimoPasso && noDestino"><strong>O que mudou:</strong> {{ curta }}
+        <button class="link" v-if="s2.desp && !s2.pago" @click="abrirDespesas">Confirmar o pagamento da despesa ›</button></p>
+      <div class="guia-corpo" :class="{ aberta: corpoAberto }">
+        <p v-if="emGuia && noDestino && !falta">{{ itemGuia.t }}</p>
+        <p v-if="falta && noDestino">Este passo depende de um anterior. «Seguinte» só muda de passo; não regista nada por si.</p>
+        <p v-if="notaEcra && noDestino">{{ notaEcra }}</p>
+        <template v-if="impacto && noDestino">
+          <p role="status"><strong>O que mudou:</strong> {{ impacto }}</p>
+          <button class="link" v-if="s2.desp && !s2.pago" @click="abrirDespesas">Voltar à despesa para confirmar o pagamento ›</button>
+        </template>
+        <button class="link" v-if="seis && vista==='recibos'" @click="escolher('jornada')">Experimentar registar um recibo na visita guiada ›</button>
+        <button class="link" v-if="seis && !emGuia" @click="irN(1)">Rever os três pontos de orientação</button>
+
+        <template v-if="ultimoPasso && noDestino">
+          <h2>O que fizeste</h2>
+          <ul class="feito">
+            <li>{{ s2.neg ? '✓ Registaste o negócio.' : '— Não registaste o negócio (passo 2).' }}</li>
+            <li>{{ s2.desp ? (s2.pago ? '✓ Registaste a despesa e confirmaste o seu pagamento.' : '✓ Registaste a despesa, ainda por pagar.') : '— Não registaste a despesa (passo 4).' }}</li>
+            <li>{{ s2.rec ? '✓ Confirmaste o recebimento.' : '— Não confirmaste o recebimento (passo 5).' }}</li>
+            <li>{{ s2.recibo ? '✓ Registaste o recibo.' : '— Não registaste o recibo (passo 6).' }}</li>
+          </ul>
+          <h2>A conta de novembro</h2>
+          <p class="conta-frase"><strong>{{ contaFinal() }}</strong></p>
+          <p>Uma comissão de {{ fmt(previsao('2026-11','confirmado').c) }} não é dinheiro disponível: parte fica protegida para impostos e contribuições, e parte paga as despesas da atividade.</p>
+        </template>
+        <template v-if="ultimoPasso || (seis && !emGuia)">
+          <h2>Três perguntas para si</h2>
+          <ol>
+            <li>Isto corresponde à dificuldade que reconhece nos associados?</li>
+            <li>O que não corresponde à realidade, parece confuso ou pouco credível?</li>
+            <li>Poderia apresentar-nos agentes disponíveis para experimentar e avaliar o preço?</li>
+          </ol>
+        </template>
+        <p class="nota">Hoje, nesta demonstração, é 14/11/2026. «Anterior» e «Seguinte» só mudam de {{ seis ? 'ponto' : 'passo' }}: nada é guardado sem o botão da própria aplicação.</p>
+      </div>
+    </aside>
+
+    <!-- SIMULAÇÃO DO PORTAL: pertence ao guia, não à aplicação -->
+    <section class="simulacao" v-if="simPortal">
+      <h1 tabindex="-1" data-foco>Simulação: isto não é o Portal das Finanças</h1>
+      <p>Ecrã fictício do guia, só para experimentar colar os valores copiados. Nada é emitido nem enviado. Não use estes valores no Portal real.</p>
+      <template v-for="l in folha" :key="l[0]">
+        <label :for="'s-' + l[0]">{{ l[0] }}</label>
+        <input :id="'s-' + l[0]" v-model="colado[l[0]]" autocomplete="off">
+      </template>
+      <button class="botao" @click="simPortal=false; focar()">Voltar à aplicação</button>
+    </section>
+
+    <!-- APLICAÇÃO: só o que o agente vê -->
+    <div class="app-moldura" v-show="!simPortal">
+      <div class="app-barra" aria-hidden="true">Agentimo</div>
+      <nav class="nav" aria-label="Navegação principal">
+        <button :aria-current="vista==='previsao' ? 'page' : null" @click="ir('previsao')">Previsão</button>
+        <button :aria-current="['negocios','negocio','novo','receber'].includes(vista) ? 'page' : null" @click="ir('negocios')">Negócios</button>
+        <button :aria-current="vista==='despesas' ? 'page' : null" @click="ir('despesas')">Despesas</button>
+        <button :aria-current="vista==='recibos' ? 'page' : null" @click="ir('recibos')">Recibos</button>
+      </nav>
+
+      <main>
+        <p class="toast" v-if="toast" tabindex="-1" role="status">{{ toast }} <button class="link" @click="toast=''">Fechar</button></p>
+        <p class="aviso" v-if="aviso" role="alert">{{ aviso }}</p>
+
+        <!-- PREVISÃO E HISTÓRICO -->
+        <section v-if="vista==='previsao'">
+          <h1 tabindex="-1" data-foco>{{ mes.tipo==='historico' ? 'Histórico' : 'Previsão' }}</h1>
+          <fieldset class="seg" v-if="mes.tipo!=='historico'">
+            <legend>Cenário</legend>
+            <label v-for="(nome, k) in { confirmado: 'Confirmado', provavel: 'Provável', total: 'Total' }" :key="k" :class="{ ativo: e.cenario===k }">
+              <input type="radio" name="cenario" :value="k" v-model="e.cenario" @change="guardar"> {{ nome }}
+            </label>
+          </fieldset>
+          <div class="mesnav">
+            <button @click="mudarMes(-1)" aria-label="Mês anterior">◄</button>
+            <strong aria-live="polite">{{ mes.label }}<span class="etiqueta"> · {{ { historico: 'histórico', atual: 'mês atual', futuro: 'previsão' }[mes.tipo] }}</span></strong>
+            <button @click="mudarMes(1)" aria-label="Mês seguinte">►</button>
+          </div>
+
+          <div class="colunas">
+            <div class="cartao destaque">
+              <div class="rotulo">{{ mes.tipo==='historico' ? 'Resultado após reservas estimadas' : 'É realmente teu' }}</div>
+              <div class="grande">{{ fmt(dados.teu) }}</div>
+              <p class="nota" v-if="mes.tipo==='historico'">{{ mes.label.split(' ')[0] }}: recebimentos e despesas confirmados; reservas calculadas pelas tuas definições.</p>
+              <p class="nota" v-else-if="mes.tipo==='atual'">Previsão para o mês completo de {{ mes.label.split(' ')[0] }}, cenário {{ cenarioNome }}.<br>Não é o saldo da tua conta.</p>
+              <p class="nota" v-else>Previsão para {{ mes.label.split(' ')[0] }}, cenário {{ cenarioNome }}.<br>Não é o saldo da tua conta.</p>
+              <p class="nota" v-if="dados.teu < 0">Neste mês as despesas e reservas ultrapassam o que {{ mes.tipo==='historico' ? 'entrou' : 'entra' }}.</p>
+              <button class="link" @click="aberto.como=!aberto.como" :aria-expanded="aberto.como">Como se chega a este valor {{ aberto.como ? '▾' : '›' }}</button>
+              <ol v-if="aberto.como" class="como">
+                <li>{{ mes.tipo==='historico' ? 'Entraram' : 'Entram' }} na conta {{ fmt(dados.entrou + dados.porEntrar) }}.</li>
+                <li v-if="mes.tipo==='historico'">Reserva calculada: {{ fmt(proteger) }} para IVA, IRS e Segurança Social (estimativa).</li>
+                <li v-else>Ficam de parte {{ fmt(proteger) }} para IVA, IRS e Segurança Social.</li>
+                <li>{{ mes.tipo==='historico' ? 'Saíram' : 'Saem' }} {{ fmt(dados.desp) }} de despesas.</li>
+                <li>{{ mes.tipo==='historico' ? 'Resultado' : 'Sobram' }}: {{ fmt(dados.teu) }}.</li>
+              </ol>
+            </div>
+            <dl class="linhas">
+              <div><dt>Comissão</dt><dd>{{ fmt(dados.c) }}</dd></div>
+              <div class="sub" v-if="mes.tipo!=='futuro'"><dt>Já recebido</dt><dd>{{ fmt(dados.rec) }}</dd></div>
+              <div class="sub" v-if="mes.tipo!=='historico'"><dt>Por receber</dt><dd>{{ fmt(dados.por) }}</dd></div>
+              <div><dt>{{ { historico: 'Entrou na conta', atual: 'Entrada na conta, mês completo', futuro: 'Entrará na conta' }[mes.tipo] }}</dt><dd>{{ fmt(dados.entrou + dados.porEntrar) }}</dd></div>
+              <template v-if="mes.tipo==='atual'">
+                <div class="sub"><dt>Já entrou</dt><dd>{{ fmt(dados.entrou) }}</dd></div>
+                <div class="sub"><dt>Por entrar</dt><dd>{{ fmt(dados.porEntrar) }}</dd></div>
+              </template>
+              <div><dt><button class="link" @click="aberto.proteger=!aberto.proteger" :aria-expanded="aberto.proteger">{{ mes.tipo==='historico' ? 'Reserva calculada' : 'Dinheiro a proteger' }} {{ aberto.proteger ? '▾' : '›' }}</button></dt><dd>{{ fmt(proteger) }}</dd></div>
+              <template v-if="aberto.proteger">
+                <div class="sub"><dt>Reserva de IVA</dt><dd>{{ fmt(dados.prot[0]) }}</dd></div>
+                <div class="sub"><dt>Reserva de IRS</dt><dd>{{ fmt(dados.prot[1]) }}</dd></div>
+                <div class="sub"><dt>Seg. Social (est.)</dt><dd>{{ fmt(dados.prot[2]) }}</dd></div>
+              </template>
+              <div><dt><button class="link" @click="abrirDespesas">Despesas ›</button></dt><dd>{{ fmt(dados.desp) }}</dd></div>
+            </dl>
+          </div>
+          <p class="nota" v-if="mes.tipo!=='historico'">{{ { confirmado: 'Confirmado: só negócios confirmados e valores já recebidos.', provavel: 'Provável: junta os negócios prováveis aos confirmados.', total: 'Total: junta também os negócios potenciais.' }[e.cenario] }}</p>
+
+          <template v-for="grupo in [['historico','Histórico'],['atual','Mês atual'],['futuro','Previsão']]" :key="grupo[0]">
+            <template v-if="meses.some(m => m.tipo===grupo[0])">
+              <h2>{{ grupo[1] }}</h2>
+              <ul class="meses">
+                <li v-for="m in meses.filter(m => m.tipo===grupo[0])" :key="m.key">
+                  <button :class="{ ativo: m.key===mes.key }" @click="setMes(m.key)"><span>{{ m.curto }}</span><span>{{ fmt(teu(m.key)) }}</span></button>
+                </li>
+              </ul>
+            </template>
+          </template>
+        </section>
+
+        <!-- NEGÓCIOS -->
+        <section v-if="vista==='negocios'">
+          <h1 tabindex="-1" data-foco>Negócios</h1>
+          <p v-if="!negocios.length">Ainda não tens negócios. Regista o primeiro para veres quanto vais receber.</p>
+          <ul class="lista">
+            <li v-for="n in negocios" :key="n.id">
+              <button @click="ir('negocio', n.id)">
+                <strong>{{ n.nome }}</strong>
+                <span>{{ n.fase }} · {{ n.partes.map(p => p.mes).join(' e ') }}</span>
+                <span>{{ fmt(n.parte) }}</span>
+              </button>
+            </li>
+          </ul>
+          <button class="botao" v-if="!seis && !s2.neg" @click="ir('novo')">Novo negócio</button>
+        </section>
+
+        <!-- NEGÓCIO -->
+        <section v-if="vista==='negocio'">
+          <button class="link" @click="ir('negocios')">‹ Negócios</button>
+          <template v-if="negocio">
+            <h1 tabindex="-1" data-foco>{{ negocio.nome }}</h1>
+            <p>Fase: <strong>{{ negocio.fase }}</strong></p>
+            <dl class="linhas">
+              <div><dt>Comissão da agência</dt><dd>{{ fmt(negocio.agencia) }}</dd></div>
+              <div><dt>A tua percentagem</dt><dd>50 %</dd></div>
+              <div><dt>A tua parte</dt><dd>{{ fmt(negocio.parte) }}</dd></div>
+            </dl>
+            <h2>Pagamentos</h2>
+            <div class="cartao" v-for="p in negocio.partes" :key="p.mes">
+              <div class="par"><span>{{ p.mes }}</span><strong>{{ fmt(p.valor) }}</strong></div>
+              <p v-if="p.recebido">Recebido a {{ p.recebido }} · entraram {{ fmt(p.entrou) }} na conta</p>
+              <template v-else>
+                <p>Previsto</p>
+                <button class="botao" v-if="!seis" @click="ir('receber')">Registar recebimento</button>
+              </template>
+            </div>
+          </template>
+          <template v-else>
+            <h1 tabindex="-1" data-foco>Negócios</h1>
+            <p>Ainda não tens negócios. Regista o primeiro para veres quanto vais receber.</p>
+            <button class="botao" @click="ir('novo')">Novo negócio</button>
+          </template>
+        </section>
+
+        <!-- NOVO NEGÓCIO: o formulário que o agente usa, já preenchido e bloqueado nesta visita -->
+        <section v-if="vista==='novo'">
+          <button class="link" @click="ir('negocios')">‹ Negócios</button>
+          <h1 tabindex="-1" data-foco>Novo negócio</h1>
+          <template v-if="!s2.neg">
+            <form @submit.prevent="guardarNegocio" @click="bloqueado" novalidate>
+              <label for="n-nome">Nome do negócio</label>
+              <input id="n-nome" value="T3 Telheiras" readonly>
+              <label for="n-ag">Comissão da agência (sem IVA)</label>
+              <div class="campo"><input id="n-ag" value="10000,00" inputmode="decimal" readonly><span>€</span></div>
+              <label for="n-perc">A tua percentagem</label>
+              <div class="campo"><input id="n-perc" value="50" inputmode="decimal" readonly><span>%</span></div>
+              <div class="par"><span>A tua parte</span><strong>5 000,00 €</strong></div>
+              <label for="n-mes">Quando esperas receber</label>
+              <input id="n-mes" value="novembro 2026" readonly>
+              <fieldset class="seg">
+                <legend>Fase</legend>
+                <label><input type="radio" name="fase" disabled> Potencial</label>
+                <label><input type="radio" name="fase" disabled> Provável</label>
+                <label class="ativo"><input type="radio" name="fase" checked> Confirmado</label>
+              </fieldset>
+              <p>Agência: Imo Lisboa, Lda</p>
+              <button class="botao" type="submit" @click.stop>Guardar negócio</button>
+            </form>
+          </template>
+          <p v-else><strong>Este negócio já está guardado.</strong></p>
+        </section>
+
+        <!-- REGISTAR RECEBIMENTO: dois passos, como na aplicação -->
+        <section v-if="vista==='receber'">
+          <button class="link" @click="recPasso===2 ? (recPasso=1) : ir('negocio', 't2')">‹ Voltar</button>
+          <template v-if="!s2.rec && recPasso===1">
+            <h1 tabindex="-1" data-foco>Registar recebimento</h1>
+            <p>T3 Telheiras<br>Pagamento de novembro 2026</p>
+            <p class="nota">Pelas tuas definições:</p>
+            <dl class="linhas">
+              <div><dt>A tua comissão (sem IVA)</dt><dd>5 000,00 €</dd></div>
+              <div><dt>Entra na conta</dt><dd>4 900,00 €</dd></div>
+            </dl>
+            <p class="nota">(comissão + IVA − retenção)</p>
+            <form @submit.prevent="recPasso=2; focar()" @click="bloqueado" novalidate>
+              <label for="r-data">Data do recebimento</label>
+              <input id="r-data" value="14/11/2026" readonly>
+              <fieldset class="opcoes">
+                <legend>O que recebeste?</legend>
+                <label><input type="radio" name="resp" checked> A comissão foi 5 000,00 € e entraram 4 900,00 € na conta</label>
+                <label><input type="radio" name="resp" disabled> A comissão foi 5 000,00 €, mas entrou outro valor</label>
+                <label><input type="radio" name="resp" disabled> A comissão foi outro valor</label>
+              </fieldset>
+              <button class="botao" type="submit" @click.stop>Continuar</button>
+            </form>
+          </template>
+          <template v-else-if="!s2.rec">
+            <h1 tabindex="-1" data-foco>Confirmar recebimento</h1>
+            <p>Recebido a 14/11/2026</p>
+            <dl class="linhas">
+              <div><dt>Comissão (sem IVA)</dt><dd>5 000,00 €</dd></div>
+              <div><dt>Entra na conta</dt><dd>4 900,00 €</dd></div>
+              <div><dt>Dinheiro a proteger</dt><dd>1 900,00 €</dd></div>
+            </dl>
+            <p class="nota">Depois de confirmares, estes valores ficam fixos. Podes corrigir o recebimento mais tarde, e a correção fica registada.</p>
+            <button class="botao" @click="confirmarRecebimento">Confirmar recebimento</button>
+          </template>
+          <template v-else>
+            <h1 tabindex="-1" data-foco>Registar recebimento</h1>
+            <p><strong>Este recebimento já está registado.</strong></p>
+          </template>
+        </section>
+
+        <!-- DESPESAS -->
+        <section v-if="vista==='despesas'">
+          <h1 tabindex="-1" data-foco>Despesas</h1>
+          <div class="mesnav">
+            <button @click="mudarMes(-1)" aria-label="Mês anterior">◄</button>
+            <strong aria-live="polite">{{ mes.label }}</strong>
+            <button @click="mudarMes(1)" aria-label="Mês seguinte">►</button>
+          </div>
+          <dl class="linhas">
+            <div><dt>Total do mês</dt><dd>{{ fmt(totaisDesp[0]) }}</dd></div>
+            <div class="sub"><dt>Pago</dt><dd>{{ fmt(totaisDesp[1]) }}</dd></div>
+            <div class="sub"><dt>Previsto</dt><dd>{{ fmt(totaisDesp[2]) }}</dd></div>
+          </dl>
+          <p v-if="!despesas.length">{{ seis || s2.desp ? 'Sem despesas neste mês.' : 'Ainda não tens despesas.' }}</p>
+          <div class="cartao" v-for="d in despesas" :key="d.nome">
+            <div class="par"><span>{{ d.nome }}</span><strong>{{ fmt(d.valor) }}</strong></div>
+            <p>{{ d.pago ? 'Paga a ' + d.pago : (d.para ? 'Prevista para ' + d.para : 'Prevista') }}</p>
+            <template v-if="!seis && !d.pago">
+              <button class="botao secundario" v-if="!confPago" @click="confPago=true">Confirmar pagamento</button>
+              <form v-else @submit.prevent="confirmarPagamento" @click="bloqueado" novalidate>
+                <label for="p-valor">Valor pago</label>
+                <div class="campo"><input id="p-valor" value="150,00" inputmode="decimal" readonly><span>€</span></div>
+                <label for="p-data">Data do pagamento</label>
+                <input id="p-data" value="12/11/2026" readonly>
+                <button class="botao" type="submit" @click.stop>Confirmar pagamento</button>
+              </form>
+            </template>
+          </div>
+          <template v-if="!seis && !s2.desp && s2.neg">
+            <button class="botao" v-if="!novaDesp" @click="novaDesp=true">Nova despesa</button>
+            <form class="cartao" v-else @submit.prevent="guardarDespesa" @click="bloqueado" novalidate>
+              <h2>Nova despesa</h2>
+              <label for="d-desc">Descrição</label>
+              <input id="d-desc" value="Fotografia profissional" readonly>
+              <label for="d-valor">Valor (com IVA)</label>
+              <div class="campo"><input id="d-valor" value="150,00" inputmode="decimal" readonly><span>€</span></div>
+              <fieldset class="seg">
+                <legend>Tipo</legend>
+                <label class="ativo"><input type="radio" name="tipo" checked> Pontual</label>
+                <label><input type="radio" name="tipo" disabled> Todos os meses</label>
+              </fieldset>
+              <label for="d-data">Data prevista</label>
+              <input id="d-data" value="10/11/2026" readonly>
+              <fieldset class="opcoes">
+                <legend>Já pagaste?</legend>
+                <label><input type="radio" name="paga" checked> Ainda não paguei</label>
+                <label><input type="radio" name="paga" disabled> Já paguei</label>
+              </fieldset>
+              <label for="d-neg">Negócio (opcional)</label>
+              <input id="d-neg" value="T3 Telheiras" readonly>
+              <button class="botao" type="submit" @click.stop>Guardar despesa</button>
+            </form>
+          </template>
+        </section>
+
+        <!-- RECIBOS -->
+        <section v-if="vista==='recibos'">
+          <template v-if="recEcra==='lista'">
+            <h1 tabindex="-1" data-foco>Recibos</h1>
+            <p v-if="!recibos.length">Ainda não tens recebimentos. Quando registares um, os dados da fatura-recibo aparecem aqui.</p>
+            <template v-else>
+              <dl class="linhas">
+                <div><dt>Total recebido</dt><dd>{{ fmt(totaisRecibos[0]) }}</dd></div>
+                <div class="sub"><dt>Com recibo registado</dt><dd>{{ fmt(totaisRecibos[1]) }}</dd></div>
+                <div class="sub"><dt>Por cobrir com recibo</dt><dd>{{ fmt(totaisRecibos[2]) }}</dd></div>
+              </dl>
+              <p v-if="totaisRecibos[2]===0">Não há montantes recebidos por cobrir com recibos registados.</p>
+              <div class="cartao" v-for="r in recibos" :key="r.negocio">
+                <strong>{{ r.negocio }}</strong>
+                <dl class="linhas">
+                  <div><dt>Recebido</dt><dd>{{ fmt(r.recebido) }}</dd></div>
+                  <div><dt>Com recibo</dt><dd>{{ fmt(r.comRecibo) }}</dd></div>
+                  <div><dt>Por cobrir</dt><dd>{{ fmt(r.recebido - r.comRecibo) }}</dd></div>
+                </dl>
+                <p class="nota" v-if="r.nota">{{ r.nota }}</p>
+                <button class="botao" v-if="r.recebido > r.comRecibo" @click="recEcra='folha'; focar()">Preparar fatura-recibo</button>
+              </div>
+            </template>
+          </template>
+
+          <template v-if="recEcra==='folha'">
+            <button class="link" @click="recEcra='lista'; focar()">‹ Recibos</button>
+            <h1 tabindex="-1" data-foco>Preparar fatura-recibo</h1>
+            <p>Copia cada valor para o Portal das Finanças. Emites tu: o Agentimo não emite documentos nem acede ao Portal.</p>
+            <div class="cartao folha" v-for="l in folha" :key="l[0]">
+              <div class="rotulo">{{ l[0] }}</div>
+              <div class="par"><span class="valor">{{ l[1] }}</span><button class="botao secundario pequeno" :aria-label="'Copiar ' + l[0]" @click="copiar(l[0], l[1])">{{ copiado===modo + '|' + l[0] ? 'Copiado' : 'Copiar' }}</button></div>
+              <div v-if="falhouCopia===modo + '|' + l[0]" role="alert">
+                <p class="erro">Não foi possível copiar automaticamente. O valor está selecionado abaixo: copia-o à mão.</p>
+                <input class="manual" readonly :value="l[1]" :aria-label="l[0] + ', para copiar à mão'" @focus="$event.target.select()">
+              </div>
+            </div>
+            <p class="nota" aria-live="polite">{{ copiado ? 'Copiado: ' + copiado.split('|')[1] : '' }}</p>
+            <button class="botao secundario" @click="simPortal=true; focar()">Abrir o Portal das Finanças ↗</button>
+            <button class="botao" v-if="!seis && !s2.recibo" @click="recEcra='registar'; focar()">Já emiti: registar recibo</button>
+          </template>
+
+          <template v-if="recEcra==='registar'">
+            <button class="link" @click="recEcra='folha'; focar()">‹ Voltar</button>
+            <h1 tabindex="-1" data-foco>Registar recibo</h1>
+            <fieldset class="opcoes">
+              <legend>Como queres registar?</legend>
+              <label><input type="radio" name="modo" value="pdf" v-model="modoRecibo"> Carregar o PDF do recibo</label>
+              <label><input type="radio" name="modo" value="manual" v-model="modoRecibo"> Escrever os dados</label>
+            </fieldset>
+            <p class="aviso" v-if="modoRecibo==='pdf'"><strong>Documento lido.</strong> O emitente e o tipo de documento coincidem com os teus dados. Isto não prova que o documento é autêntico.</p>
+            <template v-if="modoRecibo==='manual'">
+              <label for="rc-num">Número do recibo (opcional)</label>
+              <input id="rc-num" v-model="numero" autocomplete="off">
+            </template>
+            <dl class="linhas">
+              <div><dt>Data</dt><dd>14/11/2026</dd></div>
+              <div><dt>Valor base</dt><dd>5 000,00 €</dd></div>
+              <div><dt>IVA</dt><dd>1 150,00 €</dd></div>
+              <div><dt>Retenção</dt><dd>1 250,00 €</dd></div>
+              <div><dt>Total</dt><dd>4 900,00 €</dd></div>
+            </dl>
+            <p class="nota">Isto regista o recibo no Agentimo. Não emite nem altera o documento no Portal.</p>
+            <button class="botao" @click="registarRecibo">Registar recibo</button>
+          </template>
+        </section>
+      </main>
+    </div>
+  </div>
+</div>
+<script src="vendor/vue.global.prod.js"></script>
+<script src="comentario.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Agentimo — guia do moderador</title>
+<style>
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 16px; color: #1e1e1e; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+th, td { border: 1px solid #999; padding: 8px; text-align: left; vertical-align: top; }
+.caixa { border: 2px solid #b00020; padding: 10px 14px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>Guia do moderador</h1>
+<p class="caixa"><strong>Esta página não é mostrada aos participantes.</strong> O participante vê apenas a ligação de cada exercício. Cada ligação abre o protótipo no estado inicial desse exercício; recarregar a página repõe esse estado.</p>
+<p>Protótipo descartável com dados fictícios e resultados predefinidos. Não há contas, pagamentos nem ligação ao Portal das Finanças ou ao Idealista. Só os valores de cada exercício são reconhecidos.</p>
+
+<h2>Exercícios</h2>
+<table>
+<tr><th>#</th><th>Abrir</th><th>O que dizer ou mostrar ao participante</th><th>Resultado esperado (só para o observador)</th></tr>
+<tr><td>1</td><td><a href="index.html?f=A">Estado A</a><br>«hoje» é 14/10/2026</td><td>«Esperas esta comissão no próximo mês. Regista-a e diz-me quanto poderias gastar depois dos teus custos e reservas.» Dados do negócio: comissão da agência 10 000 € sem IVA; a tua percentagem 50 %; novembro de 2026.</td><td>Negócio criado com a parte de 5 000,00 €. Resposta: 2 650,00 € («É realmente teu»), não 4 900,00 €.</td></tr>
+<tr><td>2</td><td><a href="index.html?f=B">Estado B</a><br>«hoje» é 14/11/2026</td><td>Notificação de pagamento: comissão 5 000,00 € sem IVA; transferência 4 900,00 €.</td><td>Um recebimento de 5 000,00 €; sem passo de diferença.</td></tr>
+<tr><td>3</td><td><a href="index.html?f=B">Estado B</a></td><td>Notificação de pagamento: comissão 4 500,00 € sem IVA; transferência 4 410,00 €.</td><td>Um recebimento de 4 500,00 €; a diferença de 500,00 € resolvida por escolha explícita.</td></tr>
+<tr><td>4</td><td><a href="index.html?f=B">Estado B</a></td><td>Notificação: comissão 5 000,00 € sem IVA. O extrato bancário mostra 4 880,00 €.</td><td>Um recebimento de 5 000,00 €, com 4 880,00 € observados e a diferença de 20,00 € confirmada.</td></tr>
+<tr><td>5</td><td><a href="index.html?f=C">Estado C</a><br>negócio «Loja Alvalade»</td><td>Notificação: o pagamento de 10 de outubro foi de 950,00 € de comissão sem IVA e 931,00 € de transferência, e não 900,00 € e 882,00 €.</td><td>Recebimento corrigido para 950,00 €; o valor por receber desce de 100,00 € para 50,00 €.</td></tr>
+<tr><td>6</td><td><a href="index.html?f=B">Estado B</a></td><td>«Explica-me porque é que o valor que entra na conta e o valor que é teu são diferentes.»</td><td rowspan="2">Distingue os dois valores e diz que o valor em destaque não é o saldo da conta.</td></tr>
+<tr><td>7</td><td><a href="index.html?f=B">Estado B</a></td><td>«O valor no topo deste ecrã está hoje na tua conta bancária?»</td></tr>
+</table>
+
+<h2>Valores reconhecidos pelo protótipo</h2>
+<ul>
+<li>Novo negócio (estado A): comissão da agência <code>10000</code> ou <code>10000,00</code>; percentagem <code>50</code>.</li>
+<li>«A comissão foi outro valor» (estado B, T2 Campo de Ourique): <code>4500</code> ou <code>4500,00</code>.</li>
+<li>Corrigir os dados do negócio (estado B): comissão da agência <code>9000,00</code>, percentagem <code>50</code>.</li>
+<li>Correção (estado C, Loja Alvalade): <code>950</code> ou <code>950,00</code>; dados do negócio <code>2100,00</code> e <code>50</code>.</li>
+<li>Qualquer outro valor mostra «Este protótipo só conhece os valores do exercício».</li>
+<li>Um valor com separador de milhares (por exemplo <code>10 000,00</code>) é rejeitado com a mensagem de correção. É o comportamento especificado, não uma falha.</li>
+</ul>
+
+<h2>Simulações</h2>
+<p>Acrescentar à ligação do exercício:</p>
+<table>
+<tr><th>Parâmetro</th><th>Efeito</th></tr>
+<tr><td><a href="index.html?f=B&sim=lento"><code>&amp;sim=lento</code></a></td><td>Os valores calculados demoram 2,5 s («A calcular…»).</td></tr>
+<tr><td><a href="index.html?f=B&sim=falha"><code>&amp;sim=falha</code></a></td><td>O primeiro cálculo falha; «Tentar novamente» funciona.</td></tr>
+<tr><td><a href="index.html?f=B&sim=rejeitado"><code>&amp;sim=rejeitado</code></a></td><td>A confirmação é recusada: «Nada foi alterado».</td></tr>
+<tr><td><a href="index.html?f=B&sim=desconhecido"><code>&amp;sim=desconhecido</code></a></td><td>A primeira confirmação fica sem resposta; «Verificar novamente» conclui o registo, uma única vez.</td></tr>
+</table>
+
+<h2>Versão de demonstração</h2>
+<p>A demonstração autónoma é um modo separado: duas demonstrações em <a href="demo.html?demo=api">demo.html?demo=api</a> («Ver seis meses de atividade» e «Experimentar do início ao fim»). Funcionam sem moderador e mostram, no ecrã de entrada, a nota «Protótipo para apreciação pela API Portugal». Os exercícios desta página não fazem parte dela.</p>
+</body>
+</html>
