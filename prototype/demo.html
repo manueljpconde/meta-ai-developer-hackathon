@@ -39,6 +39,7 @@
         <button class="link" @click="mostrarGuia(!guiaVisivel)">{{ guiaVisivel ? 'Ocultar guia' : 'Mostrar guia' }}</button>
         <button class="link" @click="escolher('entrada')">Mudar de demonstração</button>
         <button class="link" @click="aRecomecar=true">Recomeçar</button>
+        <button class="link" v-if="comentariosUrl" ref="botaoComentar" @click="abrirComentario">Comentar este ecrã</button>
       </div>
       <div class="demo-barra-acoes" v-else role="alert">
         <span>Recomeçar repõe esta demonstração no início. A outra não é alterada.</span>
@@ -46,6 +47,38 @@
         <button class="link" @click="aRecomecar=false">Cancelar</button>
       </div>
     </div>
+
+    <!-- COMENTAR ESTE ECRÃ: pertence à demonstração, não à aplicação. -->
+    <dialog class="comentario" ref="dialogoComentario" aria-labelledby="comentario-titulo" @close="aoFecharComentario">
+      <div class="comentario-topo">
+        <h2 id="comentario-titulo">Comentar este ecrã</h2>
+        <button class="link" @click="fecharComentario">Fechar</button>
+      </div>
+      <p class="comentario-contexto"><strong>Sobre:</strong> {{ comentario.contexto }}</p>
+      <template v-if="comentario.estado !== 'enviado'">
+        <div class="comentario-outro" v-if="comentario.atual !== comentario.contexto && comentario.estado !== 'desconhecido' && comentario.estado !== 'a_enviar'">
+          <p>Este rascunho é sobre outro ecrã. Está agora em: {{ comentario.atual }}</p>
+          <button class="link" @click="passarComentarioParaEcraAtual">Passar o rascunho para o ecrã atual</button>
+        </div>
+        <label for="comentario-texto">A sua opinião</label>
+        <textarea id="comentario-texto" v-model="comentario.texto" rows="5" maxlength="2000" @input="aoEditarComentario"
+          :disabled="comentario.estado==='a_enviar' || comentario.estado==='desconhecido'"
+          :aria-invalid="!!comentario.erro" aria-describedby="comentario-limite comentario-aviso comentario-erro"></textarea>
+        <p class="nota" id="comentario-limite">Até 2 000 caracteres. Escritos: {{ comentario.texto.length }}.</p>
+        <p class="erro" id="comentario-erro" role="alert" v-if="comentario.erro">{{ comentario.erro }}</p>
+        <p class="nota" id="comentario-aviso">Enviamos este texto e o contexto acima. Não pedimos o seu nome nem o seu email. O alojamento regista dados técnicos do pedido, como o endereço IP, durante um período limitado. O rascunho perde-se se recarregar a página.</p>
+        <div class="comentario-acoes">
+          <button class="botao" @click="enviarComentario" :disabled="comentario.estado==='a_enviar'">
+            {{ comentario.estado==='a_enviar' ? 'A enviar…' : (comentario.estado==='falhou' || comentario.estado==='desconhecido' ? 'Tentar novamente' : 'Enviar opinião') }}
+          </button>
+        </div>
+        <div class="comentario-pendente" v-if="comentario.estado==='desconhecido'">
+          <p>O comentário anterior pode já ter sido recebido. Continuar inicia um novo comentário.</p>
+          <button class="link" @click="iniciarNovoComentario">Iniciar um novo comentário</button>
+        </div>
+      </template>
+      <p v-else class="toast" role="status">Opinião enviada. Obrigado.</p>
+    </dialog>
 
     <!-- GUIA: fora da aplicação. Só navega e explica; nunca guarda nem confirma nada. -->
     <aside class="guia-painel" v-if="guiaVisivel" aria-label="Guia da demonstração">
@@ -430,6 +463,7 @@
   </div>
 </div>
 <script src="vendor/vue.global.prod.js"></script>
+<script src="comentario.js"></script>
 <script src="demo.js"></script>
 </body>
 </html>

@@ -134,6 +134,14 @@ function fmt(c) {
   const neg = c < 0; const s = String(Math.abs(c)).padStart(3, '0');
   return (neg ? '−' : '') + s.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ',' + s.slice(-2) + ' €';
 }
+// crypto.randomUUID só existe em contexto seguro; o recurso produz um UUID v4 com a mesma origem aleatória.
+function novoId() {
+  if (window.crypto.randomUUID) return window.crypto.randomUUID();
+  const b = window.crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
+}
 // Estado guardado por demonstração, com versão dos dados: um estado de outra versão é ignorado.
 function ler(chave, inicial) {
   try { const g = JSON.parse(localStorage.getItem(chave) || 'null'); if (g && g.v === VERSAO) return Object.assign({}, inicial, g.d); } catch (e) { /* sem armazenamento */ }
@@ -151,6 +159,8 @@ window.demo = createApp({
       vista: 'previsao', negId: 't3', aberto: { como: false, proteger: false }, toast: '', aviso: '', aRecomecar: false,
       novaDesp: false, confPago: false, recEcra: 'lista', copiado: '', falhouCopia: '', colado: {}, modoRecibo: '', numero: '', sobre: false,
       guiaVisivel: g.guiaVisivel, guiaAberta: null, avisoGuia: '', recPasso: 1, simPortal: false,
+      comentariosUrl: window.DEMO_COMENTARIOS || '',
+      comentario: { id: '', texto: '', contexto: '', atual: '', estado: 'rascunho', erro: '' },
     };
   },
   computed: {
@@ -263,6 +273,65 @@ window.demo = createApp({
       const m = this.previsao('2026-11', 'confirmado'); const p = m.prot[0] + m.prot[1] + m.prot[2];
       return fmt(m.entrou + m.porEntrar) + ' − ' + fmt(p) + ' a proteger − ' + fmt(m.desp) + ' de despesas = ' + fmt(m.teu);
     },
+    // Comentários: nada aqui altera o estado da demonstração nem o que está guardado no browser.
+    contextoAtual() {
+      const comItem = (this.vista === 'negocio' || this.vista === 'receber') && this.negocio;
+      return window.Comentario.contextoDoEcra({
+        modo: this.modo, emGuia: this.emGuia, noDestino: this.noDestino, n: this.n, total: this.total, vista: this.vista,
+        mesLabel: this.mes.label, mesTipo: this.mes.tipo, cenario: this.e.cenario, negocioNome: comItem ? this.negocio.nome : '',
+        novaDesp: this.novaDesp, confPago: this.confPago, recEcra: this.recEcra, simPortal: this.simPortal,
+      });
+    },
+    // Um rascunho, uma recusa ou um envio pendente ficam com o contexto em que foram escritos.
+    // Só um comentário vazio, ou já enviado, passa a ser sobre o ecrã atual.
+    abrirComentario() {
+      const c = this.comentario;
+      c.atual = this.contextoAtual();
+      if (c.estado === 'enviado' || (c.estado === 'rascunho' && !c.texto.trim())) {
+        Object.assign(c, { id: novoId(), texto: '', contexto: c.atual, estado: 'rascunho', erro: '' });
+      }
+      this.$refs.dialogoComentario.showModal();
+      nextTick(() => { const t = document.getElementById('comentario-texto'); if (t) t.focus(); });
+    },
+    // Um texto ou um contexto diferente é outro comentário: recebe outro identificador.
+    aoEditarComentario() { Object.assign(this.comentario, { id: novoId(), estado: 'rascunho', erro: '' }); },
+    passarComentarioParaEcraAtual() { this.comentario.contexto = this.comentario.atual; this.aoEditarComentario(); },
+    // Não cancela o envio pendente, que pode já ter sido recebido: começa outro comentário, com outro identificador.
+    iniciarNovoComentario() { this.aoEditarComentario(); nextTick(() => document.getElementById('comentario-texto').focus()); },
+    async enviarComentario() {
+      const c = this.comentario;
+      if (c.estado === 'a_enviar' || c.estado === 'enviado') return;
+      const texto = c.texto.trim();
+      if (!texto) { c.erro = 'Escreva a sua opinião antes de enviar.'; nextTick(() => document.getElementById('comentario-texto').focus()); return; }
+      // Nova tentativa de um envio de resultado desconhecido: uma recusa agora não esclarece o que aconteceu ao primeiro pedido.
+      const pendente = c.estado === 'desconhecido';
+      c.erro = ''; c.estado = 'a_enviar';
+      const controlo = new AbortController(); const relogio = setTimeout(() => controlo.abort(), 10000);
+      let estado = 0; let corpo = null;
+      try {
+        const r = await fetch(this.comentariosUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: c.id, texto, contexto: c.contexto }), signal: controlo.signal });
+        estado = r.status;
+        try { corpo = await r.json(); } catch (erro) { corpo = null; }
+      } catch (erro) { estado = 0; } finally { clearTimeout(relogio); }
+      // Só a resposta da própria função confirma o envio: um 200 vindo de outro lado (uma página de erro, um proxy) não conta.
+      const resposta = corpo !== null && typeof corpo === 'object' ? corpo.estado : '';
+      if ((estado === 201 && resposta === 'guardado') || (estado === 200 && resposta === 'duplicado')) { c.estado = 'enviado'; return; }
+      // Recusa clara de um primeiro envio: nada foi guardado e o texto pode ser corrigido.
+      if (!pendente && ((estado >= 400 && estado < 500) || estado === 507)) {
+        c.estado = 'falhou';
+        c.erro = estado === 429 || estado === 507 ? 'De momento não é possível receber opiniões. O texto fica aqui; tente mais tarde.'
+          : estado === 400 || estado === 413 ? 'O texto não foi aceite. Encurte-o e tente novamente.'
+          : 'Não foi possível enviar. O texto fica aqui; tente novamente.';
+        return;
+      }
+      // Sem resposta, erro do servidor, resposta que não é a da função, ou recusa de uma nova tentativa: o comentário pode ter sido guardado.
+      // O texto, o contexto e o identificador ficam como estão até haver confirmação ou a pessoa iniciar um novo comentário.
+      c.estado = 'desconhecido';
+      c.erro = estado === 429 || estado === 507 ? 'Não foi possível confirmar o envio. O texto fica aqui; tente mais tarde.' : 'Não foi possível confirmar o envio. O texto fica aqui; tente novamente.';
+    },
+    fecharComentario() { this.$refs.dialogoComentario.close(); },
+    aoFecharComentario() { nextTick(() => { const b = this.$refs.botaoComentar; if (b) b.focus(); }); },
+
     guardar() { escrever(CHAVES.geral, { modo: this.modo, demo: this.demo, guiaVisivel: this.guiaVisivel }); escrever(CHAVES.seis, this.s1); escrever(CHAVES.jornada, this.s2); },
     ir(v, id) { this.vista = v; if (id) this.negId = id; this.toast = ''; this.aviso = ''; this.avisoGuia = ''; this.copiado = ''; this.falhouCopia = ''; this.recEcra = 'lista'; this.recPasso = 1; this.simPortal = false; this.focar(); },
     bloqueado() { this.avisoGuia = 'Campos bloqueados: os dados desta visita já estão preenchidos.'; },
