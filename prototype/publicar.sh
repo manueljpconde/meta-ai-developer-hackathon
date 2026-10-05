@@ -14,5 +14,5 @@ cp vendor/vue.global.prod.js .publicar/public/vendor/
 # Só o que está em public/ é servido. A função e o seu serviço ficam fora.
 cp publicacao/api/comentario.js .publicar/api/
 cp publicacao/servico/comentario-servico.js .publicar/servico/
-cp publicacao/package.json publicacao/vercel.json .publicar/
+cp publicacao/package.json publicacao/package-lock.json publicacao/vercel.json .publicar/
 echo "Pasta pronta: prototype/.publicar"
