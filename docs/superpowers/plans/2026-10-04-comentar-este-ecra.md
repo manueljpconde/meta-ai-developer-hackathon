@@ -29,7 +29,7 @@
 - Comments are about a screen. No element selection, screenshots, session recording, star ratings or behavioural tracking.
 - No change to the production product or to the financial data of the demonstration.
 - Interface copy is European Portuguese. The comment window addresses the visitor formally ("a sua opinião").
-- The only new dependency is `@vercel/blob`.
+- The only new dependency is `@vercel/blob`, pinned to an exact version with a lockfile (`prototype/publicacao/package-lock.json`, created with `npm install --package-lock-only`): the duplicate and conflict guarantees depend on how the library's `get` and `put` behave, so a redeploy must not pick up a new version silently.
 
 ## Decisions proposed for confirmation
 
@@ -366,6 +366,27 @@ test('corpo demasiado grande', async () => {
   assert.equal(l.ficheiros.size, 0);
 });
 
+test('corpo anunciado como demasiado grande é recusado pelo cabeçalho, sem ser lido', async () => {
+  const l = loja();
+  const r = await novo(l)(pedido(valido(), { cabecalhos: { 'content-length': '20000' } }));
+  assert.equal(r.status, 413);
+  assert.equal(l.ficheiros.size, 0);
+});
+
+test('corpo enviado em pedaços, sem tamanho anunciado: a leitura para no limite', async () => {
+  const l = loja(); let lidos = 0; let cancelado = false;
+  const pedaco = new Uint8Array(4096).fill(97);
+  const corpo = new ReadableStream({
+    pull(c) { if (lidos >= 5 * 1024 * 1024) { c.close(); return; } lidos += pedaco.length; c.enqueue(pedaco); },
+    cancel() { cancelado = true; },
+  }, { highWaterMark: 0 });
+  const r = await novo(l)(new Request(ORIGEM + '/api/comentario', { method: 'POST', duplex: 'half', body: corpo, headers: { host: 'demo.agentimo.propware.pt', origin: ORIGEM, 'content-type': 'application/json' } }));
+  assert.equal(r.status, 413);
+  assert.ok(cancelado, 'a leitura devia ser interrompida');
+  assert.ok(lidos <= 16384 + 2 * 4096, 'foram lidos ' + lidos + ' bytes de um corpo de 5 MB');
+  assert.equal(l.ficheiros.size, 0);
+});
+
 test('2 000 caracteres são aceites seja qual for o seu tamanho em bytes', async () => {
   const casos = { acentos: 'ç'.repeat(2000), simbolos: '€'.repeat(2000), emoji: '😀'.repeat(1000), aspas: '"'.repeat(2000), controlo: '\u0001'.repeat(2000) };
   let n = 0;
@@ -437,7 +458,7 @@ Create `prototype/publicacao/package.json`:
   "type": "module",
   "engines": { "node": "22.x" },
   "dependencies": {
-    "@vercel/blob": "^2.3.0"
+    "@vercel/blob": "2.8.0"
   }
 }
 ```
@@ -465,6 +486,22 @@ function responder(estado, corpo) {
   });
 }
 
+// Lê o corpo até ao limite e devolve-o como texto, ou null se o ultrapassar.
+// Um pedido sem tamanho anunciado não chega a ser guardado em memória para lá do limite.
+async function lerCorpo(request) {
+  if (!request.body) return '';
+  const leitor = request.body.getReader();
+  const partes = []; let total = 0;
+  for (;;) {
+    const { done, value } = await leitor.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_CORPO) { await leitor.cancel(); return null; }
+    partes.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(partes));
+}
+
 // Devolve { id, texto, contexto } normalizados, ou null se o corpo não for válido.
 function validar(corpo) {
   if (corpo === null || typeof corpo !== 'object' || Array.isArray(corpo)) return null;
@@ -489,8 +526,8 @@ export function criarManipulador({ ler, guardar, contar, agora = () => new Date(
     if (request.headers.get('origin') !== 'https://' + request.headers.get('host')) return responder(403);
     if (!(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) return responder(415);
     if (Number(request.headers.get('content-length') || 0) > MAX_CORPO) return responder(413);
-    const bruto = await request.text();
-    if (new TextEncoder().encode(bruto).length > MAX_CORPO) return responder(413);
+    const bruto = await lerCorpo(request);
+    if (bruto === null) return responder(413);
     let c;
     try { c = validar(JSON.parse(bruto)); } catch (erro) { c = null; }
     if (!c) return responder(400);
@@ -522,7 +559,7 @@ export function criarManipulador({ ler, guardar, contar, agora = () => new Date(
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd prototype && node --test testes/comentario-servico.test.mjs`
-Expected: `# pass 20`, `# fail 0`.
+Expected: `# pass 22`, `# fail 0`.
 
 - [ ] **Step 5: Write the Vercel Function**
 
@@ -530,7 +567,8 @@ Create `prototype/publicacao/api/comentario.js`. It has no logic of its own to t
 
 ```js
 // Função da Vercel: liga o serviço de comentários à loja Blob privada do projeto.
-// A autenticação é feita pela plataforma (OIDC); não há chave no código nem no repositório.
+// A loja é escolhida e autenticada pelo token que a Vercel entrega à função como variável de ambiente cifrada,
+// um por ambiente (produção e pré-visualização). Não há chave no código nem no repositório.
 import { get, list, put } from '@vercel/blob';
 import { criarManipulador } from '../servico/comentario-servico.js';
 
@@ -755,6 +793,26 @@ const testes = {
     await d.enviarComentario(); await espera(60);
     certo(JSON.parse(pedidos[1].opcoes.body).id !== JSON.parse(pedidos[0].opcoes.body).id, 'um comentário novo tem outro id');
   },
+  async 'escrever no campo depois de uma recusa cria um comentário novo, com outro identificador'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    const escrever = (texto) => { const t = doc.getElementById('comentario-texto'); t.value = texto; t.dispatchEvent(new w.Event('input', { bubbles: true })); };
+    botao(doc).click(); await espera(120);
+    const idInicial = d.comentario.id;
+    escrever('Primeira versão'); await espera(60);
+    igual(d.comentario.texto, 'Primeira versão'); certo(d.comentario.id !== idInicial, 'escrever devia dar outro identificador');
+    w.__resposta = async () => resp(429);
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'falhou');
+    const idRecusado = JSON.parse(pedidos[0].opcoes.body).id;
+    escrever('Segunda versão, corrigida'); await espera(60);
+    igual(d.comentario.estado, 'rascunho', 'editar depois de uma recusa volta a rascunho');
+    certo(!doc.getElementById('comentario-erro'), 'a mensagem de erro devia desaparecer ao editar');
+    w.__resposta = async () => resp(201, { estado: 'guardado' });
+    await d.enviarComentario(); await espera(60);
+    const segundo = JSON.parse(pedidos[1].opcoes.body);
+    igual(segundo.texto, 'Segunda versão, corrigida'); certo(UUID.test(segundo.id) && segundo.id !== idRecusado, 'o texto corrigido tem de seguir com outro identificador');
+    igual(d.comentario.estado, 'enviado');
+  },
   async 'texto vazio ou só com espaços não é enviado'() {
     const { d, doc, pedidos } = await emSeis();
     botao(doc).click(); await espera(120); d.comentario.texto = '   \n ';
@@ -842,7 +900,7 @@ const testes = {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd prototype && python3 -m http.server 8767 --bind 127.0.0.1`, and open `http://127.0.0.1:8767/testes/comentario.test.html`.
-Expected: `2 de 18 passaram`. Only "sem endereço configurado não há botão" and "critério 6" pass: neither depends on the new code, and the second is the guard that saved progress survives. Any other pass is a defect in the test.
+Expected: `2 de 19 passaram`. Only "sem endereço configurado não há botão" and "critério 6" pass: neither depends on the new code, and the second is the guard that saved progress survives. Any other pass is a defect in the test.
 
 - [ ] **Step 3: Add the script tag, the button and the window to `prototype/demo.html`**
 
@@ -1003,14 +1061,14 @@ dialog.comentario textarea:disabled { background: #eee; }
 - [ ] **Step 6: Run the browser tests to verify they pass**
 
 Reload `http://127.0.0.1:8767/testes/comentario.test.html`.
-Expected: `18 de 18 passaram`.
+Expected: `19 de 19 passaram`.
 
 - [ ] **Step 7: Check what the tests cannot, and run the earlier tests again**
 
 In Chrome at 390×844, 360×640 and 1280×800, with the guide expanded, collapsed and hidden, set `demo.comentariosUrl = '/api/comentario'` in the console and open the window on the previsão, on a negócio and on the recibos sheet. Expected: the window fits or scrolls inside itself, nothing is clipped, `Tab` cycles inside the window, `Esc` closes it and returns focus to "Comentar este ecrã". Sending fails locally (no function): the window shows the failure and keeps the text.
 
 Run: `cd prototype && node --test testes/comentario.test.js testes/comentario-servico.test.mjs`
-Expected: `# pass 32`, `# fail 0`.
+Expected: `# pass 34`, `# fail 0`.
 
 - [ ] **Step 8: Commit (gate: only with explicit approval)**
 
@@ -1045,7 +1103,7 @@ cp vendor/vue.global.prod.js .publicar/public/vendor/
 # Só o que está em public/ é servido. A função e o seu serviço ficam fora.
 cp publicacao/api/comentario.js .publicar/api/
 cp publicacao/servico/comentario-servico.js .publicar/servico/
-cp publicacao/package.json publicacao/vercel.json .publicar/
+cp publicacao/package.json publicacao/package-lock.json publicacao/vercel.json .publicar/
 echo "Pasta pronta: prototype/.publicar"
 ```
 

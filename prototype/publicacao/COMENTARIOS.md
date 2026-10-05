@@ -42,6 +42,15 @@ Nenhum comentário fica guardado mais de 90 dias.
 Publicação: 5 de outubro de 2026.
 Primeira revisão: 4 de novembro de 2026.
 
+## Limites conhecidos
+
+A função é pública e não distingue quem escreve. O que existe são travões, não uma proteção suficiente contra abuso: o limite da Firewall (5 pedidos por minuto por IP), o tamanho máximo do pedido e um teto de cerca de 500 comentários guardados.
+
+- **O teto pode ser esgotado de propósito.** Quem enviar comentários válidos sem parar enche a loja: um só endereço IP demora cerca de 100 minutos, vários demoram menos. O custo de armazenamento fica limitado, mas a partir daí os visitantes reais veem «De momento não é possível receber opiniões» e nada avisa disso.
+- **Como se nota:** a loja tem perto de 500 ficheiros, muitos recebidos em pouco tempo e sem sentido.
+- **Como se recupera:** confirmar que a loja é a de produção e apagar os ficheiros sem valor, um a um; a função volta a aceitar comentários assim que o número desce.
+- **Decisão do dono do produto, de 5 de outubro de 2026:** aceitar este risco residual para esta demonstração, enviada a poucas pessoas. A decisão vale só neste contexto: não é uma avaliação de que os travões acima chegam contra abuso, e não se aplica ao produto nem a uma demonstração divulgada mais amplamente, casos em que tem de ser reavaliada. Ver o número de ficheiros faz parte de cada revisão de retenção.
+
 ## Reversão da publicação
 
 O deployment de produção anterior aos comentários é `agentimo-demo-idmh28ike-crmware.vercel.app` (`dpl_JAv4iqBXcZAvePqggChMMThTZTHm`, de 5 de outubro de 2026): a demonstração sem o botão «Comentar este ecrã».
