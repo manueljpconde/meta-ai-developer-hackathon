@@ -13,6 +13,22 @@ function responder(estado, corpo) {
   });
 }
 
+// Lê o corpo até ao limite e devolve-o como texto, ou null se o ultrapassar.
+// Um pedido sem tamanho anunciado não chega a ser guardado em memória para lá do limite.
+async function lerCorpo(request) {
+  if (!request.body) return '';
+  const leitor = request.body.getReader();
+  const partes = []; let total = 0;
+  for (;;) {
+    const { done, value } = await leitor.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_CORPO) { await leitor.cancel(); return null; }
+    partes.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(partes));
+}
+
 // Devolve { id, texto, contexto } normalizados, ou null se o corpo não for válido.
 function validar(corpo) {
   if (corpo === null || typeof corpo !== 'object' || Array.isArray(corpo)) return null;
@@ -37,8 +53,8 @@ export function criarManipulador({ ler, guardar, contar, agora = () => new Date(
     if (request.headers.get('origin') !== 'https://' + request.headers.get('host')) return responder(403);
     if (!(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) return responder(415);
     if (Number(request.headers.get('content-length') || 0) > MAX_CORPO) return responder(413);
-    const bruto = await request.text();
-    if (new TextEncoder().encode(bruto).length > MAX_CORPO) return responder(413);
+    const bruto = await lerCorpo(request);
+    if (bruto === null) return responder(413);
     let c;
     try { c = validar(JSON.parse(bruto)); } catch (erro) { c = null; }
     if (!c) return responder(400);

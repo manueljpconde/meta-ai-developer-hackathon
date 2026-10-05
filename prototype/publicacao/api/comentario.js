@@ -1,5 +1,6 @@
 // Função da Vercel: liga o serviço de comentários à loja Blob privada do projeto.
-// A autenticação é feita pela plataforma (OIDC); não há chave no código nem no repositório.
+// A loja é escolhida e autenticada pelo token que a Vercel entrega à função como variável de ambiente cifrada,
+// um por ambiente (produção e pré-visualização). Não há chave no código nem no repositório.
 import { get, list, put } from '@vercel/blob';
 import { criarManipulador } from '../servico/comentario-servico.js';
 

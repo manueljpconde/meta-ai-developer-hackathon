@@ -136,6 +136,27 @@ test('corpo demasiado grande', async () => {
   assert.equal(l.ficheiros.size, 0);
 });
 
+test('corpo anunciado como demasiado grande é recusado pelo cabeçalho, sem ser lido', async () => {
+  const l = loja();
+  const r = await novo(l)(pedido(valido(), { cabecalhos: { 'content-length': '20000' } }));
+  assert.equal(r.status, 413);
+  assert.equal(l.ficheiros.size, 0);
+});
+
+test('corpo enviado em pedaços, sem tamanho anunciado: a leitura para no limite', async () => {
+  const l = loja(); let lidos = 0; let cancelado = false;
+  const pedaco = new Uint8Array(4096).fill(97);
+  const corpo = new ReadableStream({
+    pull(c) { if (lidos >= 5 * 1024 * 1024) { c.close(); return; } lidos += pedaco.length; c.enqueue(pedaco); },
+    cancel() { cancelado = true; },
+  }, { highWaterMark: 0 });
+  const r = await novo(l)(new Request(ORIGEM + '/api/comentario', { method: 'POST', duplex: 'half', body: corpo, headers: { host: 'demo.agentimo.propware.pt', origin: ORIGEM, 'content-type': 'application/json' } }));
+  assert.equal(r.status, 413);
+  assert.ok(cancelado, 'a leitura devia ser interrompida');
+  assert.ok(lidos <= 16384 + 2 * 4096, 'foram lidos ' + lidos + ' bytes de um corpo de 5 MB');
+  assert.equal(l.ficheiros.size, 0);
+});
+
 test('2 000 caracteres são aceites seja qual for o seu tamanho em bytes', async () => {
   const casos = { acentos: 'ç'.repeat(2000), simbolos: '€'.repeat(2000), emoji: '😀'.repeat(1000), aspas: '"'.repeat(2000), controlo: '\u0001'.repeat(2000) };
   let n = 0;

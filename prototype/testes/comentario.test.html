@@ -172,6 +172,26 @@ const testes = {
     await d.enviarComentario(); await espera(60);
     certo(JSON.parse(pedidos[1].opcoes.body).id !== JSON.parse(pedidos[0].opcoes.body).id, 'um comentário novo tem outro id');
   },
+  async 'escrever no campo depois de uma recusa cria um comentário novo, com outro identificador'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    const escrever = (texto) => { const t = doc.getElementById('comentario-texto'); t.value = texto; t.dispatchEvent(new w.Event('input', { bubbles: true })); };
+    botao(doc).click(); await espera(120);
+    const idInicial = d.comentario.id;
+    escrever('Primeira versão'); await espera(60);
+    igual(d.comentario.texto, 'Primeira versão'); certo(d.comentario.id !== idInicial, 'escrever devia dar outro identificador');
+    w.__resposta = async () => resp(429);
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'falhou');
+    const idRecusado = JSON.parse(pedidos[0].opcoes.body).id;
+    escrever('Segunda versão, corrigida'); await espera(60);
+    igual(d.comentario.estado, 'rascunho', 'editar depois de uma recusa volta a rascunho');
+    certo(!doc.getElementById('comentario-erro'), 'a mensagem de erro devia desaparecer ao editar');
+    w.__resposta = async () => resp(201, { estado: 'guardado' });
+    await d.enviarComentario(); await espera(60);
+    const segundo = JSON.parse(pedidos[1].opcoes.body);
+    igual(segundo.texto, 'Segunda versão, corrigida'); certo(UUID.test(segundo.id) && segundo.id !== idRecusado, 'o texto corrigido tem de seguir com outro identificador');
+    igual(d.comentario.estado, 'enviado');
+  },
   async 'texto vazio ou só com espaços não é enviado'() {
     const { d, doc, pedidos } = await emSeis();
     botao(doc).click(); await espera(120); d.comentario.texto = '   \n ';
