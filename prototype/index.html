@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Agentimo — protótipo</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <nav class="nav" v-if="!emFluxo" aria-label="Navegação principal">
+    <span class="marca">Agentimo</span>
+    <button :aria-current="vista==='previsao' ? 'page' : null" @click="ir('previsao')">Previsão</button>
+    <button :aria-current="(vista==='negocios'||vista==='negocio') ? 'page' : null" @click="ir('negocios')">Negócios</button>
+    <button :aria-current="vista==='despesas' ? 'page' : null" @click="ir('despesas')">Despesas</button>
+    <button :aria-current="vista==='recibos' ? 'page' : null" @click="ir('recibos')">Recibos</button>
+  </nav>
+
+  <main :class="{ painel: emFluxo }">
+    <p class="toast" v-if="toast" tabindex="-1" role="status">{{ toast }} <button class="link" @click="toast=''">Fechar</button></p>
+    <p class="aviso" v-if="aviso" role="status">{{ aviso }} <button class="link" @click="aviso=''">Fechar</button></p>
+    <div class="aviso" v-if="limite" role="alert">
+      <p v-if="limite==='criar'"><strong>Este exemplo não permite criar negócios.</strong> A criação está preparada no exemplo «Começar sem negócios».</p>
+      <p v-if="limite==='receber'"><strong>Este exemplo não permite registar recebimentos.</strong> Os recebimentos estão preparados no exemplo «Negócios em curso».</p>
+      <p v-if="limite==='usado'"><strong>Este exemplo só tem um registo preparado, e já foi feito.</strong> Para experimentar outro percurso, recomeça o exemplo.</p>
+      <button class="botao secundario" v-if="limite==='criar'" @click="abrirExemplo('A')">Abrir «Começar sem negócios»</button>
+      <button class="botao secundario" v-if="limite==='receber'" @click="abrirExemplo('B')">Abrir «Negócios em curso»</button>
+      <button class="botao secundario" v-if="limite==='usado'" @click="reiniciar">Recomeçar este exemplo</button>
+      <button class="link" @click="limite=''">Fechar</button>
+    </div>
+
+    <!-- PREVISÃO (W2) -->
+    <section v-if="vista==='previsao'">
+      <aside class="demo" v-if="demo==='api'">
+        <strong>Protótipo para apreciação pela API Portugal</strong><br>
+        Demonstração com dados fictícios, preparada pela <a href="https://crmware.pt" target="_blank" rel="noopener noreferrer">CrmWare</a> para recolher feedback. Não representa uma aprovação institucional.
+      </aside>
+      <div class="exemplo" v-if="demo==='api'">
+        <label for="exemplo">Exemplo</label>
+        <select id="exemplo" :value="fx" @change="abrirExemplo($event.target.value)">
+          <option v-for="e in exemplos" :key="e.f" :value="e.f">{{ e.nome }}</option>
+        </select>
+        <p class="nota">Cada exemplo tem valores preparados. Os formulários indicam os valores que o protótipo conhece.</p>
+      </div>
+      <h1 tabindex="-1" data-foco>Previsão</h1>
+
+      <div v-if="semNegocios" class="vazio">
+        <p>Ainda não tens negócios. Regista o primeiro para veres quanto vais receber.</p>
+        <button class="botao" @click="abrirNovo">Novo negócio</button>
+      </div>
+
+      <template v-else>
+        <fieldset class="seg">
+          <legend>Cenário</legend>
+          <label v-for="(nome, k) in { confirmado: 'Confirmado', provavel: 'Provável', total: 'Total' }" :key="k" :class="{ ativo: cenario===k }">
+            <input type="radio" name="cenario" :value="k" v-model="cenario"> {{ nome }}
+          </label>
+        </fieldset>
+        <p class="nota">{{ cenarioTexto }}</p>
+
+        <div class="mesnav">
+          <button @click="mudarMes(-1)" aria-label="Mês anterior">◄</button>
+          <strong aria-live="polite">{{ mes.label }}</strong>
+          <button @click="mudarMes(1)" aria-label="Mês seguinte">►</button>
+        </div>
+
+        <div class="colunas">
+          <div class="cartao destaque">
+            <div class="rotulo">É realmente teu</div>
+            <div class="grande">{{ fmt(dados.teu) }}</div>
+            <p class="nota">Estimativa para {{ mes.label.split(' ')[0] }}, cenário {{ cenarioNome }}.<br>Não é o saldo da tua conta.</p>
+            <p class="nota" v-if="dados.teu < 0">Neste mês as despesas e reservas ultrapassam o que entra.</p>
+            <button class="link" @click="aberto.como=!aberto.como" :aria-expanded="aberto.como">Como se chega a este valor {{ aberto.como ? '▾' : '›' }}</button>
+            <ol v-if="aberto.como" class="como">
+              <li>Entram na conta {{ fmt(dados.entra) }}.</li>
+              <li>Ficam de parte {{ fmt(proteger) }} para IVA, IRS e Segurança Social.</li>
+              <li>Saem {{ fmt(dados.desp) }} de despesas.</li>
+              <li>Sobram {{ fmt(dados.teu) }}.</li>
+            </ol>
+          </div>
+          <dl class="linhas">
+            <div><dt>Comissão</dt><dd>{{ fmt(dados.c) }}</dd></div>
+            <div class="sub"><dt>Já recebido</dt><dd>{{ fmt(dados.rec) }}</dd></div>
+            <div class="sub"><dt>Por receber</dt><dd>{{ fmt(dados.por) }}</dd></div>
+            <div><dt>Entrará na conta</dt><dd>{{ fmt(dados.entra) }}</dd></div>
+            <div><dt><button class="link" @click="aberto.proteger=!aberto.proteger" :aria-expanded="aberto.proteger">Dinheiro a proteger {{ aberto.proteger ? '▾' : '›' }}</button></dt><dd>{{ fmt(proteger) }}</dd></div>
+            <template v-if="aberto.proteger">
+              <div class="sub"><dt>Reserva de IVA</dt><dd>{{ fmt(dados.prot[0]) }}</dd></div>
+              <div class="sub"><dt>Reserva de IRS</dt><dd>{{ fmt(dados.prot[1]) }}</dd></div>
+              <div class="sub"><dt>Seg. Social (est.)</dt><dd>{{ fmt(dados.prot[2]) }}</dd></div>
+            </template>
+            <div><dt>Despesas</dt><dd>{{ fmt(dados.desp) }}</dd></div>
+          </dl>
+        </div>
+
+        <h2>Próximos meses</h2>
+        <ul class="meses">
+          <li v-for="m in f.meses" :key="m.key">
+            <button :class="{ ativo: m.key===mesKey }" @click="mesKey=m.key">
+              <span>{{ m.curto }} · É teu</span><span>{{ fmt(teu(m.key)) }}</span>
+            </button>
+          </li>
+        </ul>
+        <button class="link" @click="ir('negocios')">Ver negócios ›</button>
+      </template>
+    </section>
+
+    <!-- NEGÓCIOS -->
+    <section v-if="vista==='negocios'">
+      <h1 tabindex="-1" data-foco>Negócios</h1>
+      <p v-if="semNegocios">Ainda não tens negócios.</p>
+      <ul class="lista">
+        <li v-for="n in f.negocios" :key="n.id">
+          <button @click="abrirNegocio(n.id)">
+            <strong>{{ n.nome }}</strong>
+            <span>{{ FASES[n.fase] }} · {{ n.partes[0].mes }} · {{ estadoRecebimento(n) }}</span>
+            <span>{{ fmt(n.efetiva || n.parte) }}</span>
+          </button>
+        </li>
+      </ul>
+      <button class="botao" @click="abrirNovo">Novo negócio</button>
+    </section>
+
+    <!-- NEGÓCIO (W3, W3b) -->
+    <section v-if="vista==='negocio' && negocio">
+      <button class="link" @click="ir('negocios')">‹ Negócios</button>
+      <h1 tabindex="-1" data-foco>{{ negocio.nome }}</h1>
+      <p>Fase: <strong>{{ FASES[negocio.fase] }}</strong><br>Recebimento: <strong>{{ estadoRecebimento(negocio) }}</strong></p>
+      <dl class="linhas">
+        <div><dt>Comissão da agência</dt><dd>{{ fmt(negocio.agencia) }}</dd></div>
+        <div><dt>A tua percentagem</dt><dd>{{ negocio.perc }} %</dd></div>
+        <div><dt>A tua parte</dt><dd>{{ fmt(negocio.parte) }}</dd></div>
+        <template v-if="negocio.ajuste">
+          <div><dt>Ajuste</dt><dd>{{ fmt(negocio.ajuste) }}</dd></div>
+          <div><dt>Comissão efetiva</dt><dd>{{ fmt(negocio.efetiva) }}</dd></div>
+        </template>
+      </dl>
+      <h2>Pagamentos</h2>
+      <div class="cartao" v-for="p in negocio.partes" :key="p.id">
+        <div class="par"><span>{{ p.mes }}</span><strong>{{ fmt(p.recebido ? p.recebido.base : p.esperado) }}</strong></div>
+        <template v-if="p.recebido">
+          <p>Recebido a {{ p.recebido.data }}<span v-if="p.recebido.observado != null"><br>Entrou na conta: {{ fmt(p.recebido.observado) }}</span></p>
+          <button class="botao secundario" @click="abrirReceber(negocio, p)">Corrigir recebimento</button>
+        </template>
+        <template v-else>
+          <p>Previsto</p>
+          <button class="botao" @click="abrirReceber(negocio, p)">{{ negocio.fase==='confirmado' ? 'Registar recebimento' : 'Confirmar negócio e registar recebimento' }}</button>
+        </template>
+      </div>
+      <button class="link" @click="fora('Dividir pagamento')">Dividir pagamento</button><br>
+      <button class="link" @click="fora('Despesas deste negócio')">Despesas deste negócio ›</button>
+    </section>
+
+    <!-- NOVO NEGÓCIO (W1) -->
+    <section v-if="vista==='novo' && novo">
+      <button class="link" @click="sairNovo">✕ Fechar</button>
+      <h1 tabindex="-1" data-foco>Novo negócio</h1>
+      <p class="aviso" v-if="novo.confirmarSaida">Sair sem guardar? <button class="link" @click="sairNovo">Sair</button> <button class="link" @click="novo.confirmarSaida=false">Continuar a editar</button></p>
+      <form @submit.prevent="guardarNovo" novalidate>
+        <label for="n-nome">Nome do negócio</label>
+        <input id="n-nome" v-model="novo.nome" autocomplete="off" :aria-invalid="!!(novo.erros.nome)" aria-describedby="e-n-nome">
+        <p class="erro" role="alert" id="e-n-nome" v-if="novo.erros.nome">{{ novo.erros.nome }}</p>
+
+        <label for="n-ag">Comissão da agência (sem IVA)</label>
+        <div class="campo"><input id="n-ag" v-model="novo.agencia" @input="novoMudou" inputmode="decimal" autocomplete="off" :aria-invalid="!!(novo.erros.agencia)" aria-describedby="e-n-ag"><span>€</span></div>
+        <p class="erro" role="alert" id="e-n-ag" v-if="novo.erros.agencia">{{ novo.erros.agencia }}</p>
+
+        <label for="n-perc">A tua percentagem</label>
+        <div class="campo"><input id="n-perc" v-model="novo.perc" @input="novoMudou" inputmode="decimal" autocomplete="off" :aria-invalid="!!(novo.erros.perc)" aria-describedby="e-n-perc"><span>%</span></div>
+        <p class="erro" role="alert" id="e-n-perc" v-if="novo.erros.perc">{{ novo.erros.perc }}</p>
+
+        <div class="par" aria-live="polite"><span>A tua parte</span>
+          <strong v-if="novo.parte.estado==='ok'">{{ fmt(novo.parte.valor) }}</strong>
+          <span v-else-if="novo.parte.estado==='a_calcular'">A calcular…</span>
+          <span v-else-if="novo.parte.estado==='erro'">Não foi possível calcular. <button type="button" class="link" @click="novoMudou">Tentar novamente</button></span>
+          <span v-else-if="novo.parte.estado==='nao_previsto'">—</span>
+          <span v-else>—</span>
+        </div>
+        <p class="erro" role="alert" v-if="novo.parte.estado==='nao_previsto'">Este protótipo só conhece os valores do exercício. Usa os valores indicados.</p>
+
+        <label for="n-mes">Quando esperas receber</label>
+        <select id="n-mes" v-model="novo.mes"><option v-for="m in f.meses" :key="m.key" :value="m.key">{{ m.label }}</option></select>
+
+        <fieldset class="seg" :aria-invalid="!!novo.erros.fase" aria-describedby="e-n-fase">
+          <legend>Fase</legend>
+          <label v-for="(nome, k) in FASES" :key="k" :class="{ ativo: novo.fase===k }"><input type="radio" name="fase" :value="k" v-model="novo.fase"> {{ nome }}</label>
+        </fieldset>
+        <p class="erro" role="alert" id="e-n-fase" v-if="novo.erros.fase">{{ novo.erros.fase }}</p>
+
+        <p>Agência: Imo Lisboa, Lda</p>
+        <p class="nota" v-if="demo">Neste protótipo, o negócio preparado é: comissão da agência 10000,00 e percentagem 50.</p>
+        <p class="erro" role="alert" v-if="novo.erros.geral">{{ novo.erros.geral }}</p>
+        <button class="botao" type="submit" :disabled="novo.aGuardar">{{ novo.aGuardar ? 'A guardar…' : 'Guardar negócio' }}</button>
+      </form>
+    </section>
+
+    <!-- REGISTAR RECEBIMENTO (W4, W5, W5c, W6) -->
+    <section v-if="vista==='receber' && fluxo">
+      <button class="link" v-if="fluxo.passo==='w4'" @click="sairFluxo">✕ Fechar</button>
+      <button class="link" v-else-if="fluxo.envio.estado!=='desconhecido' && fluxo.envio.estado!=='a_enviar'" @click="voltar">‹ Voltar</button>
+      <p class="aviso" v-if="fluxo.confirmarSaida">Sair sem guardar? <button class="link" @click="sairFluxo">Sair</button> <button class="link" @click="fluxo.confirmarSaida=false">Continuar</button></p>
+
+      <!-- W4 -->
+      <form v-if="fluxo.passo==='w4'" @submit.prevent="continuarW4" novalidate>
+        <h1 tabindex="-1" data-foco>{{ fluxo.correcao ? 'Corrigir recebimento' : 'Registar recebimento' }}</h1>
+        <p>{{ fluxo.neg.nome }}<br>Pagamento de {{ fluxo.parte.mes }}</p>
+        <p class="nota">{{ fluxo.correcao ? 'Valores registados:' : 'Pelas tuas definições:' }}</p>
+        <dl class="linhas">
+          <div><dt>A tua comissão (sem IVA)</dt><dd>{{ fmt(fluxo.baseEsperada) }}</dd></div>
+          <div><dt>Entra na conta</dt><dd>{{ fmt(fluxo.entraEsperado) }}</dd></div>
+        </dl>
+        <p class="nota">(comissão + IVA − retenção)</p>
+
+        <label for="r-data">Data do recebimento</label>
+        <input id="r-data" type="date" v-model="fluxo.data" :min="fluxo.janela[0]" :max="fluxo.janela[1]" :aria-invalid="!!fluxo.erros.data" aria-describedby="e-r-data d-r-data">
+        <p class="nota" id="d-r-data">Neste protótipo: datas entre {{ isoParaPt(fluxo.janela[0]) }} e {{ isoParaPt(fluxo.janela[1]) }}.</p>
+        <p class="erro" role="alert" id="e-r-data" v-if="fluxo.erros.data">{{ fluxo.erros.data }}</p>
+
+        <fieldset class="opcoes" :aria-invalid="!!fluxo.erros.resposta" aria-describedby="e-r-resp">
+          <legend>O que recebeste?</legend>
+          <label><input type="radio" name="resp" value="igual" v-model="fluxo.resposta"> A comissão foi {{ fmt(fluxo.baseEsperada) }} e entraram {{ fmt(fluxo.entraEsperado) }} na conta</label>
+          <label><input type="radio" name="resp" value="outro_banco" v-model="fluxo.resposta"> A comissão foi {{ fmt(fluxo.baseEsperada) }}, mas entrou outro valor</label>
+          <label><input type="radio" name="resp" value="outra" v-model="fluxo.resposta"> A comissão foi outro valor</label>
+        </fieldset>
+        <p class="erro" role="alert" id="e-r-resp" v-if="fluxo.erros.resposta">{{ fluxo.erros.resposta }}</p>
+
+        <template v-if="fluxo.resposta==='outra'">
+          <p class="nota" v-if="demo">Neste protótipo, o outro valor preparado é {{ fluxo.neg.id==='loja' ? '950,00' : '4500,00' }}.</p>
+          <label for="r-base">Valor da tua comissão (sem IVA)</label>
+          <div class="campo"><input id="r-base" v-model="fluxo.baseTxt" @input="baseMudou" inputmode="decimal" autocomplete="off" :aria-invalid="!!(fluxo.erros.base)" aria-describedby="e-r-base"><span>€</span></div>
+          <p class="erro" role="alert" id="e-r-base" v-if="fluxo.erros.base">{{ fluxo.erros.base }}</p>
+          <div class="par" aria-live="polite"><span>Com este valor, entra na conta</span>
+            <strong v-if="fluxo.prev.estado==='ok'">{{ fmt(fluxo.prev.valor.entra) }}</strong>
+            <span v-else-if="fluxo.prev.estado==='a_calcular'">A calcular…</span>
+            <span v-else-if="fluxo.prev.estado==='erro'">Não foi possível calcular. <button type="button" class="link" @click="baseMudou">Tentar novamente</button></span>
+            <span v-else>—</span>
+          </div>
+          <p class="erro" role="alert" v-if="fluxo.prev.estado==='nao_previsto' && !fluxo.erros.base">Este protótipo só conhece os valores do exercício. Usa os valores indicados.</p>
+        </template>
+        <template v-if="fluxo.resposta==='outro_banco' || fluxo.resposta==='outra'">
+          <p class="nota" v-if="demo && fluxo.resposta==='outro_banco'">Neste protótipo, experimenta por exemplo 4880,00.</p>
+          <label for="r-obs">Valor que entrou na conta <span v-if="fluxo.resposta==='outra'">(opcional)</span></label>
+          <div class="campo"><input id="r-obs" v-model="fluxo.obsTxt" inputmode="decimal" autocomplete="off" :aria-invalid="!!(fluxo.erros.obs)" aria-describedby="e-r-obs"><span>€</span></div>
+          <p class="erro" role="alert" id="e-r-obs" v-if="fluxo.erros.obs">{{ fluxo.erros.obs }}</p>
+        </template>
+        <button class="botao" type="submit">Continuar</button>
+      </form>
+
+      <!-- W5 -->
+      <form v-if="fluxo.passo==='w5'" @submit.prevent="continuarW5" novalidate>
+        <h1 tabindex="-1" data-foco>{{ fluxo.caso.titulo }}</h1>
+        <dl class="linhas"><div v-for="l in fluxo.caso.linhas" :key="l[0]"><dt>{{ l[0] }}</dt><dd>{{ fmt(l[1]) }}</dd></div></dl>
+        <fieldset class="opcoes" :aria-invalid="!!fluxo.erros.opcao" aria-describedby="e-r-opcao">
+          <legend>{{ fluxo.caso.pergunta }}</legend>
+          <label v-for="o in fluxo.caso.opcoes" :key="o.id">
+            <input type="radio" name="opcao" :value="o.id" v-model="fluxo.opcao"> <span><strong>{{ o.rotulo }}</strong><br><span class="nota">{{ o.efeito }}</span>
+            <span v-if="o.mes && fluxo.opcao===o.id"><br><span class="nota">Previsto para:</span> <select id="r-mes" aria-label="Previsto para"><option>{{ o.mes }}</option></select></span></span>
+          </label>
+        </fieldset>
+        <p class="erro" role="alert" id="e-r-opcao" v-if="fluxo.erros.opcao">{{ fluxo.erros.opcao }}</p>
+        <button class="botao" type="submit">Continuar</button>
+      </form>
+
+      <!-- W5c -->
+      <form v-if="fluxo.passo==='w5c'" @submit.prevent="continuarW5c" novalidate>
+        <h1 tabindex="-1" data-foco>Corrigir os dados do negócio</h1>
+        <label for="o-ag">Comissão da agência (sem IVA)</label>
+        <div class="campo"><input id="o-ag" v-model="fluxo.origem.agencia" @input="origemMudou" inputmode="decimal" autocomplete="off" :aria-invalid="!!(fluxo.origem.erros.agencia)" aria-describedby="e-o-ag"><span>€</span></div>
+        <p class="erro" role="alert" id="e-o-ag" v-if="fluxo.origem.erros.agencia">{{ fluxo.origem.erros.agencia }}</p>
+        <label for="o-perc">A tua percentagem</label>
+        <div class="campo"><input id="o-perc" v-model="fluxo.origem.perc" @input="origemMudou" inputmode="decimal" autocomplete="off" :aria-invalid="!!(fluxo.origem.erros.perc)" aria-describedby="e-o-perc"><span>%</span></div>
+        <p class="erro" role="alert" id="e-o-perc" v-if="fluxo.origem.erros.perc">{{ fluxo.origem.erros.perc }}</p>
+        <div aria-live="polite">
+          <p v-if="fluxo.origem.prev.estado==='a_calcular'">A calcular…</p>
+          <p v-else-if="fluxo.origem.prev.estado==='erro'">Não foi possível calcular. <button type="button" class="link" @click="origemMudou">Tentar novamente</button></p>
+          <p class="erro" v-else-if="fluxo.origem.prev.estado==='nao_previsto'">Este protótipo só conhece os valores do exercício. Usa os valores indicados.</p>
+          <template v-else-if="fluxo.origem.prev.estado==='ok'">
+            <p>Com estes dados:</p>
+            <dl class="linhas"><div v-for="l in fluxo.origem.prev.valor" :key="l[0]"><dt>{{ l[0] }}</dt><dd>{{ fmt(l[1]) }}</dd></div></dl>
+          </template>
+          <p v-else class="nota">Altera a comissão da agência ou a percentagem.</p>
+        </div>
+        <p class="nota" v-if="demo">Neste protótipo, a correção preparada é: comissão da agência {{ opcaoEscolhida().origem.agencia }},00 e percentagem {{ opcaoEscolhida().origem.perc }}.</p>
+        <p class="nota">Só ficam guardados quando confirmares o recebimento.</p>
+        <p class="erro" role="alert" v-if="fluxo.origem.erros.geral">{{ fluxo.origem.erros.geral }}</p>
+        <button class="botao" type="submit">Continuar</button>
+      </form>
+
+      <!-- W6 -->
+      <div v-if="fluxo.passo==='w6'">
+        <h1 tabindex="-1" data-foco>{{ fluxo.correcao ? 'Confirmar correção' : 'Confirmar recebimento' }}</h1>
+        <template v-if="fluxo.origem">
+          <p><strong>Dados do negócio corrigidos:</strong></p>
+          <ul><li v-for="t in opcaoEscolhida().origem.resumo" :key="t">{{ t }}</li></ul>
+        </template>
+        <p>Recebido a {{ isoParaPt(fluxo.data) }}</p>
+        <dl class="linhas">
+          <div><dt>Comissão (sem IVA)</dt><dd>{{ fmt(fluxo.base) }}</dd></div>
+          <div><dt>Entra na conta</dt><dd>{{ fmt(pv(fluxo.base).entra) }}</dd></div>
+          <div><dt>Dinheiro a proteger</dt><dd>{{ fmt(pv(fluxo.base).proteger) }}</dd></div>
+        </dl>
+        <template v-if="difObservada() !== 0">
+          <dl class="linhas">
+            <div><dt>Entrada calculada</dt><dd>{{ fmt(pv(fluxo.base).entra) }}</dd></div>
+            <div><dt>Entrada observada</dt><dd>{{ fmt(fluxo.obs) }}</dd></div>
+            <div><dt>Diferença</dt><dd>{{ fmt(difObservada()) }}</dd></div>
+          </dl>
+          <label class="check"><input type="checkbox" v-model="fluxo.confirmaDif" :disabled="fluxo.envio.estado==='desconhecido'"> Confirmo esta diferença</label>
+          <p class="erro" role="alert" v-if="fluxo.erros.dif">{{ fluxo.erros.dif }}</p>
+        </template>
+        <p v-if="fluxo.caso.residuo !== 0 && !fluxo.origem"><strong>{{ opcaoEscolhida().resumo }}</strong></p>
+        <p v-if="fluxo.neg.fase !== 'confirmado'"><strong>O negócio passa a Confirmado.</strong></p>
+        <p class="nota" v-if="fluxo.correcao">A correção substitui o registo anterior, que fica guardado.</p>
+        <p class="nota" v-else>Depois de confirmares, estes valores ficam fixos. Podes corrigir o recebimento mais tarde, e a correção fica registada.</p>
+
+        <p class="erro" role="alert" v-if="fluxo.envio.estado==='rejeitado'" role="alert">{{ fluxo.envio.msg }}</p>
+        <div class="aviso" v-if="fluxo.envio.estado==='desconhecido'" role="alert">
+          <p><strong>Não foi possível confirmar se o recebimento ficou registado.</strong></p>
+          <p class="nota">Os valores enviados ficam bloqueados até se saber o resultado.</p>
+          <button class="botao" @click="confirmar">Verificar novamente</button>
+        </div>
+        <template v-else>
+          <button class="botao" @click="confirmar" :disabled="fluxo.envio.estado==='a_enviar'">{{ fluxo.envio.estado==='a_enviar' ? 'A registar…' : (fluxo.correcao ? 'Confirmar correção' : 'Confirmar recebimento') }}</button>
+        </template>
+      </div>
+    </section>
+
+    <section v-if="vista==='despesas' || vista==='recibos'">
+      <h1 tabindex="-1" data-foco>{{ vista==='despesas' ? 'Despesas' : 'Recibos' }}</h1>
+      <p>Fora deste protótipo.</p>
+    </section>
+  </main>
+</div>
+<script src="vendor/vue.global.prod.js"></script>
+<script src="fixtures.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
