@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="pt-PT">
+<head><meta charset="utf-8"><title>Testes: comentar este ecrã</title>
+<style>body{font:15px system-ui;margin:16px} .ok{color:#1a7f37} .falha{color:#b00020} iframe{width:390px;height:700px;border:1px solid #999}</style>
+</head>
+<body>
+<h1>Testes: comentar este ecrã</h1>
+<p id="resumo">A correr…</p>
+<ul id="lista"></ul>
+<iframe id="alvo" title="demonstração"></iframe>
+<script>
+const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+const CHAVES = ['agentimo-demo', 'agentimo-demo-seis', 'agentimo-demo-jornada'];
+const NOV = 'Seis meses de atividade · Ponto 1 de 3 · Previsão · novembro 2026 · cenário Confirmado';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const resultados = [];
+// Resposta simulada: sem corpo indicado, ler o JSON falha, como numa página HTML.
+const resp = (status, corpo) => ({ status, json: async () => { if (corpo === undefined) throw new SyntaxError('não é JSON'); return corpo; } });
+function igual(a, b, msg) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error((msg || 'diferente') + ': ' + JSON.stringify(a) + ' ≠ ' + JSON.stringify(b)); }
+function certo(v, msg) { if (!v) throw new Error(msg || 'falso'); }
+
+async function abrir(estadoGuardado) {
+  CHAVES.forEach((k) => localStorage.removeItem(k));
+  Object.entries(estadoGuardado || {}).forEach(([k, v]) => localStorage.setItem(k, JSON.stringify(v)));
+  const f = document.getElementById('alvo');
+  await new Promise((r) => { f.onload = r; f.src = '../demo.html?t=' + Math.random(); });
+  await espera(150);
+  const w = f.contentWindow;
+  const pedidos = [];
+  w.__resposta = async () => resp(201, { estado: 'guardado' });
+  w.fetch = async (url, opcoes) => { pedidos.push({ url, opcoes }); return w.__resposta(); };
+  return { w, d: w.demo, doc: w.document, pedidos };
+}
+async function emSeis() { const x = await abrir(); x.d.comentariosUrl = '/api/comentario'; x.d.escolher('seis'); await espera(120); return x; }
+const botao = (doc) => [...doc.querySelectorAll('.demo-barra button')].find((b) => b.innerText.trim() === 'Comentar este ecrã');
+const janela = (doc) => doc.querySelector('dialog.comentario');
+const sobre = (doc) => doc.querySelector('.comentario-contexto').innerText.replace(/\s+/g, ' ').trim();
+const instantaneo = (w) => JSON.stringify({ modo: w.demo.modo, vista: w.demo.vista, s1: w.demo.s1, s2: w.demo.s2, guardado: CHAVES.map((k) => w.localStorage.getItem(k)) });
+
+const testes = {
+  async 'sem endereço configurado não há botão'() {
+    const { d, doc } = await abrir(); d.escolher('seis'); await espera(120);
+    certo(!botao(doc), 'o botão não devia existir');
+  },
+  async 'o botão fica na barra da demonstração, fora da aplicação, e a janela não abre sozinha'() {
+    const { doc } = await emSeis();
+    certo(botao(doc), 'falta o botão');
+    certo(!doc.querySelector('.app-moldura').contains(botao(doc)), 'o botão está dentro da aplicação');
+    certo(!doc.querySelector('.app-moldura').contains(janela(doc)), 'a janela está dentro da aplicação');
+    certo(!janela(doc).open, 'a janela abriu sozinha');
+  },
+  async 'critério 1: previsão de novembro, cenário Confirmado, mostra esse contexto'() {
+    const { doc } = await emSeis();
+    botao(doc).click(); await espera(120);
+    certo(janela(doc).open, 'a janela não abriu');
+    igual(sobre(doc), 'Sobre: ' + NOV);
+  },
+  async 'o contexto diz qual é o negócio aberto'() {
+    const { d, doc } = await emSeis();
+    d.ir('negocio', 't3'); await espera(100); botao(doc).click(); await espera(120);
+    igual(sobre(doc), 'Sobre: Seis meses de atividade · exploração livre · Negócio · T3 Av. de Roma · Ref 2841');
+  },
+  async 'critério 2: o que é enviado é o texto e exatamente o contexto mostrado na abertura'() {
+    const { d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120);
+    d.s1.cenario = 'total'; d.s1.mesKey = '2026-12'; await espera(60);
+    d.comentario.texto = '  O valor a proteger devia estar mais visível.  ';
+    await d.enviarComentario(); await espera(60);
+    igual(pedidos.length, 1, 'número de pedidos');
+    igual(pedidos[0].url, '/api/comentario'); igual(pedidos[0].opcoes.method, 'POST');
+    igual(pedidos[0].opcoes.headers['Content-Type'], 'application/json');
+    const corpo = JSON.parse(pedidos[0].opcoes.body);
+    igual(Object.keys(corpo).sort(), ['contexto', 'id', 'texto']);
+    igual(corpo.texto, 'O valor a proteger devia estar mais visível.');
+    igual(corpo.contexto, NOV, 'o contexto enviado não é o que foi mostrado');
+    certo(UUID.test(corpo.id), 'id inválido');
+    igual(d.comentario.estado, 'enviado');
+    certo(janela(doc).innerText.includes('Opinião enviada'), 'falta a confirmação');
+    certo(!doc.getElementById('comentario-texto'), 'o campo devia desaparecer depois do envio');
+  },
+  async 'critério 3: abrir, escrever e fechar não altera a demonstração nem o que está guardado'() {
+    const { w, d, doc } = await abrir(); d.comentariosUrl = '/api/comentario'; d.escolher('jornada'); await espera(120);
+    d.irN(2); await espera(80); d.guardarNegocio(); await espera(120);
+    const antes = instantaneo(w);
+    botao(doc).click(); await espera(120); d.comentario.texto = 'rascunho-de-teste'; await d.enviarComentario(); d.fecharComentario(); await espera(120);
+    igual(instantaneo(w), antes, 'o estado mudou');
+    certo(!CHAVES.some((k) => (w.localStorage.getItem(k) || '').includes('rascunho-de-teste')), 'o comentário foi guardado no browser');
+  },
+  async 'critério 4: uma recusa mantém o texto, não mostra sucesso e permite corrigir e tentar de novo'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Texto a preservar';
+    w.__resposta = async () => resp(429);
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'falhou'); igual(d.comentario.texto, 'Texto a preservar');
+    certo(!janela(doc).innerText.includes('Opinião enviada'), 'sucesso indevido');
+    certo(doc.getElementById('comentario-erro'), 'falta a mensagem de erro');
+    certo(!doc.getElementById('comentario-texto').disabled, 'depois de uma recusa o texto pode ser corrigido');
+    d.fecharComentario(); await espera(80); botao(doc).click(); await espera(120);
+    igual(d.comentario.texto, 'Texto a preservar', 'o texto perdeu-se ao reabrir');
+    w.__resposta = async () => resp(201, { estado: 'guardado' });
+    await d.enviarComentario(); await espera(60);
+    igual(pedidos.length, 2); igual(d.comentario.estado, 'enviado');
+  },
+  async 'resultado desconhecido: bloqueia o texto e repete exatamente o mesmo pedido'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Sem resposta';
+    w.__resposta = async () => { throw new Error('rede'); };
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'desconhecido');
+    certo(doc.getElementById('comentario-texto').disabled, 'o texto devia ficar bloqueado');
+    certo(!janela(doc).innerText.includes('Opinião enviada'), 'sucesso indevido');
+    certo(!doc.querySelector('.comentario-outro'), 'um envio pendente não pode mudar de ecrã');
+    w.__resposta = async () => resp(503);
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'desconhecido', 'um erro do servidor também é resultado desconhecido');
+    w.__resposta = async () => resp(200, { estado: 'duplicado' });
+    await d.enviarComentario(); await espera(60);
+    igual(pedidos.length, 3); igual(pedidos[1].opcoes.body, pedidos[0].opcoes.body); igual(pedidos[2].opcoes.body, pedidos[0].opcoes.body);
+    igual(d.comentario.estado, 'enviado');
+  },
+  async 'uma recusa numa nova tentativa não desbloqueia um envio de resultado desconhecido'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Pode já ter chegado';
+    w.__resposta = async () => { throw new Error('tempo esgotado'); };
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'desconhecido');
+    for (const estado of [429, 507, 400, 403, 409, 413]) {
+      w.__resposta = async () => resp(estado);
+      await d.enviarComentario(); await espera(60);
+      igual(d.comentario.estado, 'desconhecido', 'depois de ' + estado);
+      certo(doc.getElementById('comentario-texto').disabled, 'depois de ' + estado + ' o texto continua bloqueado');
+      certo(doc.querySelector('.comentario-pendente'), 'depois de ' + estado + ' continua a oferecer um novo comentário');
+      certo(doc.getElementById('comentario-erro'), 'depois de ' + estado + ' falta a mensagem');
+      certo(!janela(doc).innerText.includes('Opinião enviada'), 'depois de ' + estado + ': sucesso indevido');
+    }
+    w.__resposta = async () => resp(200, { estado: 'duplicado' });
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'enviado');
+    igual(pedidos.length, 8);
+    certo(pedidos.every((x) => x.opcoes.body === pedidos[0].opcoes.body), 'todas as tentativas têm de repetir o mesmo pedido, com o mesmo id');
+    igual(JSON.parse(pedidos[0].opcoes.body).texto, 'Pode já ter chegado');
+  },
+  async 'uma resposta que não é a da função não confirma o envio'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Resposta estranha';
+    const id = d.comentario.id; const contexto = d.comentario.contexto;
+    const estranhas = { '200 com HTML': resp(200), '201 com HTML': resp(201), '200 com outro JSON': resp(200, { ok: true }), '200 com JSON que não é objeto': resp(200, 'guardado'), '201 com o corpo do 200': resp(201, { estado: 'duplicado' }), '200 com o corpo do 201': resp(200, { estado: 'guardado' }), '204 sem corpo': resp(204) };
+    for (const [nome, r] of Object.entries(estranhas)) {
+      w.__resposta = async () => r;
+      await d.enviarComentario(); await espera(40);
+      igual(d.comentario.estado, 'desconhecido', nome);
+      certo(!janela(doc).innerText.includes('Opinião enviada'), nome + ': sucesso indevido');
+      igual([d.comentario.texto, d.comentario.contexto, d.comentario.id], ['Resposta estranha', contexto, id], nome + ': texto, contexto ou id mudaram');
+    }
+    certo(pedidos.every((x) => x.opcoes.body === pedidos[0].opcoes.body), 'as tentativas não repetiram o mesmo pedido');
+    w.__resposta = async () => resp(200, { estado: 'duplicado' });
+    await d.enviarComentario(); igual(d.comentario.estado, 'enviado');
+  },
+  async 'iniciar um novo comentário depois de um envio pendente avisa que o anterior pode ter sido recebido'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Primeira versão';
+    w.__resposta = async () => { throw new Error('rede'); };
+    await d.enviarComentario(); await espera(60);
+    const pendente = doc.querySelector('.comentario-pendente');
+    certo(pendente && pendente.innerText.includes('O comentário anterior pode já ter sido recebido. Continuar inicia um novo comentário.'), 'falta o aviso');
+    certo(!/cancel|desist/i.test(pendente.innerText), 'a opção não pode parecer um cancelamento do envio anterior');
+    d.iniciarNovoComentario(); await espera(60);
+    igual(d.comentario.estado, 'rascunho'); igual(d.comentario.texto, 'Primeira versão');
+    certo(!doc.getElementById('comentario-texto').disabled, 'o texto devia poder ser editado');
+    certo(!doc.querySelector('.comentario-pendente'), 'o aviso devia desaparecer');
+    w.__resposta = async () => resp(201, { estado: 'guardado' });
+    await d.enviarComentario(); await espera(60);
+    certo(JSON.parse(pedidos[1].opcoes.body).id !== JSON.parse(pedidos[0].opcoes.body).id, 'um comentário novo tem outro id');
+  },
+  async 'escrever no campo depois de uma recusa cria um comentário novo, com outro identificador'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    const escrever = (texto) => { const t = doc.getElementById('comentario-texto'); t.value = texto; t.dispatchEvent(new w.Event('input', { bubbles: true })); };
+    botao(doc).click(); await espera(120);
+    const idInicial = d.comentario.id;
+    escrever('Primeira versão'); await espera(60);
+    igual(d.comentario.texto, 'Primeira versão'); certo(d.comentario.id !== idInicial, 'escrever devia dar outro identificador');
+    w.__resposta = async () => resp(429);
+    await d.enviarComentario(); await espera(60);
+    igual(d.comentario.estado, 'falhou');
+    const idRecusado = JSON.parse(pedidos[0].opcoes.body).id;
+    escrever('Segunda versão, corrigida'); await espera(60);
+    igual(d.comentario.estado, 'rascunho', 'editar depois de uma recusa volta a rascunho');
+    certo(!doc.getElementById('comentario-erro'), 'a mensagem de erro devia desaparecer ao editar');
+    w.__resposta = async () => resp(201, { estado: 'guardado' });
+    await d.enviarComentario(); await espera(60);
+    const segundo = JSON.parse(pedidos[1].opcoes.body);
+    igual(segundo.texto, 'Segunda versão, corrigida'); certo(UUID.test(segundo.id) && segundo.id !== idRecusado, 'o texto corrigido tem de seguir com outro identificador');
+    igual(d.comentario.estado, 'enviado');
+  },
+  async 'texto vazio ou só com espaços não é enviado'() {
+    const { d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = '   \n ';
+    await d.enviarComentario(); await espera(60);
+    igual(pedidos.length, 0); certo(doc.getElementById('comentario-erro'), 'falta a mensagem');
+    igual(doc.getElementById('comentario-texto').maxLength, 2000);
+    certo(doc.getElementById('comentario-limite').innerText.includes('2 000 caracteres'), 'o limite não é explicado antes do envio');
+  },
+  async 'dois toques seguidos enviam um só pedido'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Uma vez';
+    w.__resposta = async () => { await espera(150); return resp(201, { estado: 'guardado' }); };
+    const a = d.enviarComentario(); await espera(30);
+    certo([...janela(doc).querySelectorAll('button')].find((b) => b.innerText.includes('A enviar')).disabled, 'o botão devia ficar desativado');
+    const b = d.enviarComentario(); await Promise.all([a, b]);
+    igual(pedidos.length, 1);
+  },
+  async 'um rascunho fica ligado ao ecrã em que foi escrito, até ser passado de propósito'() {
+    const { d, doc, pedidos } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Sobre novembro'; d.fecharComentario(); await espera(100);
+    d.ir('despesas'); await espera(100); botao(doc).click(); await espera(120);
+    igual(sobre(doc), 'Sobre: ' + NOV, 'o rascunho mudou de ecrã sozinho');
+    igual(d.comentario.texto, 'Sobre novembro');
+    const aviso = doc.querySelector('.comentario-outro');
+    certo(aviso && aviso.innerText.includes('Despesas · novembro 2026'), 'falta o aviso de que o rascunho é de outro ecrã');
+    d.passarComentarioParaEcraAtual(); await espera(80);
+    igual(sobre(doc), 'Sobre: Seis meses de atividade · exploração livre · Despesas · novembro 2026');
+    certo(!doc.querySelector('.comentario-outro'), 'o aviso devia desaparecer');
+    await d.enviarComentario();
+    igual(JSON.parse(pedidos[0].opcoes.body).contexto, 'Seis meses de atividade · exploração livre · Despesas · novembro 2026');
+  },
+  async 'depois de enviar, a janela reabre vazia e com o contexto do ecrã atual'() {
+    const { d, doc } = await emSeis();
+    botao(doc).click(); await espera(120); d.comentario.texto = 'Primeiro'; await d.enviarComentario(); d.fecharComentario(); await espera(100);
+    d.ir('negocios'); await espera(100); botao(doc).click(); await espera(120);
+    igual(d.comentario.texto, ''); igual(d.comentario.estado, 'rascunho');
+    igual(sobre(doc), 'Sobre: Seis meses de atividade · exploração livre · Negócios');
+    certo(!doc.querySelector('.comentario-outro'), 'aviso indevido');
+  },
+  async 'critério 5: o foco entra na janela e volta ao botão ao fechar'() {
+    const { d, doc } = await emSeis();
+    const b = botao(doc); b.focus(); b.click(); await espera(150);
+    igual(doc.activeElement.id, 'comentario-texto', 'o foco não entrou no texto');
+    igual(janela(doc).getAttribute('aria-labelledby'), 'comentario-titulo');
+    d.fecharComentario(); await espera(150);
+    certo(doc.activeElement === botao(doc), 'o foco não voltou ao botão');
+  },
+  async 'sem contexto seguro o identificador continua a ser um UUID'() {
+    const { w, d, doc, pedidos } = await emSeis();
+    Object.defineProperty(w.crypto, 'randomUUID', { value: undefined, configurable: true });
+    botao(doc).click(); await espera(120); d.comentario.texto = 'x'; await d.enviarComentario();
+    certo(UUID.test(JSON.parse(pedidos[0].opcoes.body).id), 'id inválido');
+  },
+  async 'critério 6: o progresso guardado por quem já abriu a ligação é preservado'() {
+    const v = '2026-10-04.8';
+    const guardado = {
+      'agentimo-demo': { v, d: { modo: 'jornada', demo: 'api', guiaVisivel: true } },
+      'agentimo-demo-jornada': { v, d: { passo: 5, neg: true, desp: true, pago: true, rec: false, recibo: false, reciboModo: '', reciboNum: '', ultimo: 'pago', cenario: 'confirmado', mesKey: '2026-11' } },
+      'agentimo-demo-seis': { v, d: { cenario: 'provavel', mesKey: '2026-12', ponto: 4 } },
+    };
+    const { w, d } = await abrir(guardado);
+    igual(w.DEMO_DADOS.VERSAO, v, 'a versão dos dados mudou');
+    igual(d.modo, 'jornada'); igual([d.s2.passo, d.s2.neg, d.s2.desp, d.s2.pago, d.s2.rec], [5, true, true, true, false]);
+    igual([d.s1.cenario, d.s1.mesKey, d.s1.ponto], ['provavel', '2026-12', 4]);
+  },
+};
+
+(async () => {
+  for (const [nome, fn] of Object.entries(testes)) {
+    let erro = '';
+    try { await fn(); } catch (e) { erro = e.message; }
+    resultados.push({ nome, ok: !erro, erro });
+    const li = document.createElement('li'); li.className = erro ? 'falha' : 'ok'; li.textContent = (erro ? '✗ ' : '✓ ') + nome + (erro ? ' — ' + erro : '');
+    document.getElementById('lista').appendChild(li);
+  }
+  const ok = resultados.filter((r) => r.ok).length;
+  document.getElementById('resumo').textContent = ok + ' de ' + resultados.length + ' passaram';
+  window.__resultados = { ok, total: resultados.length, falhas: resultados.filter((r) => !r.ok) };
+})();
+</script>
+</body>
+</html>
