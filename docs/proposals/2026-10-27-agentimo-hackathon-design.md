@@ -193,3 +193,67 @@ the field error shown; nothing partial is saved. Model unavailability
 degrades to manual entry (C.3). Persistence failure saves nothing and
 says so; re-submission is safe because records are created only by the
 single confirmation action carrying a client-generated idempotency key.
+
+## D. Necessity table
+
+| Component | Required capability | What fails without it | Simpler alternative | Decision |
+| --- | --- | --- | --- | --- |
+| Deterministic engine (reduced, C.2) | Correct, auditable money figures; the four distinct values | The product promise itself; every figure becomes a prepared fixture again | Model-computed figures — rejected: model is not the arithmetic authority | Keep |
+| Interpretation adapter (one model call) | Turn free text into a confirmable draft | The AI contribution and the entry-friction reduction; journey degrades to a form | Manual structured entry — kept as the built-in fallback, not the primary | Keep, conditional on section E experiment |
+| Confirmation screen (draft beside source text) | Explicit human approval before any financial record | AI suggestions would create records unreviewed; correctness criterion fails | Auto-save with undo — rejected: weaker guarantee, more states | Keep |
+| Record store (one database) | Confirmed negocios and settlements survive between the forecast and payment steps | The journey cannot span "expected" to "received" | In-memory/session state — rejected: payment step may happen days later | Keep, minimal schema |
+| Agent settings entry (IVA, retencao, reserve rates) | Figures reflect the agent's own situation; no tax advice given | Engine would need invented defaults — prohibited | Hard-coded example rates — rejected for the live journey; used only in fixtures | Keep |
+| Foundation: accounts, Paddle billing, two-layer isolation, lapse/erasure, admin, three languages | Commercial operation | Nothing in the demonstration journey | Demonstration on synthetic data with a single shared demo user | Remove from hackathon scope; remain planned product scope |
+| Receipt assistant, PDF extraction, file store | Record issued receipts without retyping | No hackathon criterion: it is a separate journey from the primary one, with two open implementation gates | Copy sheet values from the forecast by hand during the demo narrative | Defer entirely to post-pilot decision; boundaries preserved unchanged |
+| Expenses as recurring rules, split payment parts, replacement chains, 12-month forecast/history | Full product-core fidelity | Nothing in the primary journey, which uses one negocio, one part, one monthly expense total | Monthly expense total (chosen) | Defer |
+| Multiple agents, RAG, vector database, queues, microservices, orchestration framework | None demonstrated | Nothing | Single process and one model call (chosen) | Remove |
+| Chatbot interface | None beyond the interpretation step | Nothing; free-text input is a field, not a conversation | Structured form with one free-text field (chosen) | Remove |
+| Prototype code reuse | A running start | Nothing if rebuilt small; prototype is documented disposable and computes nothing | Reuse fixtures, journey, and wording only (chosen) | Do not build on prototype code |
+
+## E. Feasibility
+
+**Resources.** No new paid services. Needs: one deploy target for a
+single web process plus one small database (an existing or free tier
+the team already controls — unverified, section G), and runtime access
+to a Meta model endpoint for the product itself. The design crew's
+model gateway is not assumed available to the product.
+
+**Effort (estimates, one developer):** engine with tests, 0.5-1 day;
+three screens with confirmation flow, 1-2 days; interpretation adapter
+with validation and fallback, 0.5 day; deployment and demonstration
+script, 0.5 day. Total roughly 3-4 days inside the 26 October -
+4 November window, leaving review time. These are planning estimates,
+not measurements.
+
+**Model cost.** Exactly one call per deal submission; no call for the
+forecast, payment, or any other step. Token assumption per call: input
+is the agent's short text plus schema (order of a few hundred tokens);
+output is the small field JSON (order of one hundred tokens, capped).
+Cost per journey = 1 x (input tokens x input price + output tokens x
+output price); cost per 100 journeys = 100 x that. Prices, quotas, and
+even endpoint access are unknown (not supplied), so no numeric cost is
+claimed — the formula and the token counts above are what must be
+priced once access is confirmed. After any temporary credits expire,
+the same formula applies at the then-current price; if no paid access
+is acceptable, the fallback is manual entry and the model call is
+disabled, with no other change.
+
+**Model selection.** The least expensive Meta model that passes the
+experiment below. Capability is not asserted in advance.
+
+**Smallest experiment that could invalidate the proposal:** before
+building the journey, run 15-20 synthetic free-text deal descriptions
+(including ambiguous ones: missing share, missing month, amounts with
+and without IVA mentioned) through the candidate endpoint. Pass bar:
+every amount and percentage extracted exactly as stated or returned
+null, no invented values, valid schema output in all cases. If the
+cheapest available model invents figures or cannot follow the
+null rule, the AI step is not safe as designed: fall back to the
+manual-entry alternative in section B rather than weakening the
+confirmation boundary.
+
+**Delivery sequence:** (1) run the experiment and record the result;
+(2) engine plus tests against the product core spec's worked examples;
+(3) screens and confirmation flow with manual entry; (4) interpretation
+adapter behind the same confirmation screen; (5) end-to-end checks in
+section F, then freeze for submission.
