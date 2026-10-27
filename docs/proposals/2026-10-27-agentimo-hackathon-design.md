@@ -257,3 +257,43 @@ confirmation boundary.
 (3) screens and confirmation flow with manual entry; (4) interpretation
 adapter behind the same confirmation screen; (5) end-to-end checks in
 section F, then freeze for submission.
+
+## F. Verification
+
+All checks below are **proposed**; none has been executed, because
+nothing is implemented yet. Executed evidence so far is limited to the
+repository reading in section A (branch and commit recorded there) and
+the existence proof for this file.
+
+| Case | Observable check | Pass condition |
+| --- | --- | --- |
+| Normal journey | Enter the section B example text with known settings; confirm; read the forecast | The four values appear with separate labels and equal a hand computation of the product core spec section 5 formulas in integer cents |
+| Financial correctness | Engine test vectors taken from the product core and UX specs' worked examples, including half-up rounding boundaries and retencao exceeding the IRS target | Every component matches to the cent; commission, bank inflow, protected, and available are never conflated; forecasts, payments, and receipts are never summed together (receipts do not exist in this build) |
+| Ambiguous input | Submit text missing the share and the month | Those fields arrive empty and are asked for; no value is invented; confirmation is impossible until the agent supplies them |
+| Model error | Stub the endpoint to return malformed JSON, an out-of-range share, and an amount not present in the text | Invalid output is rejected or flagged field by field; no record is created; the agent corrects on the confirmation screen |
+| Model unavailability | Disable or time out the endpoint, then submit | Manual entry opens pre-filled with any valid fields; the journey completes without the model |
+| No double counting | Confirm one negocio, record its payment once, repeat the confirmation request with the same idempotency key | Exactly one negocio and one settlement exist; received plus outstanding still equals the effective commission |
+| Confirmation boundary | Attempt to reach the forecast without confirming the draft | No record exists and no figures are shown as the agent's |
+
+Demonstration honesty check: the submitted build must be labelled as a
+controlled demonstration on synthetic data. It is not commercially
+ready: no accounts, billing, isolation, receipt issuance, or Portal
+interaction is provided or implied.
+
+## G. Decision dependencies
+
+Each item names the exact evidence needed and the decision it gates.
+Recommendations affected are conditional until then.
+
+| # | Unknown | Decision it gates | Evidence needed, from someone with access |
+| --- | --- | --- | --- |
+| 1 | Complete official hackathon rules, including use of pre-existing code | Whether the imported repository, specs, and fixtures may be built on at all | The official rules text, retrieved by the owner |
+| 2 | Selected track (indie developer or startup) | Which judging emphasis the submission narrative targets | The owner's track choice or registration confirmation |
+| 3 | Runtime access to a Meta model endpoint for the product: availability, eligible models, quotas, prices, credit allocation | Whether section B's AI step ships or the manual-entry alternative ships; the numeric cost per journey | Account/credit confirmation and the model's price sheet from the provider |
+| 4 | A deploy target the team already controls at no new cost | Whether the live journey can be hosted for judging | Confirmation of the hosting account and its limits |
+| 5 | Departure from the MVP's "no AI" decision, limited to free-text interpretation (section B) | Whether the AI step may be built | The owner's approval of this proposal |
+| 6 | Representative Portal fatura-recibo PDF and the upload-closure protocol | Nothing in this proposal; gates only the deferred receipt assistant | A real Portal PDF supplied by the product owner; the chosen storage's closure proof |
+| 7 | Whether agents value the forecast enough to pay (MVP analysis section 7) | Any post-hackathon product investment; not the demonstration | The paid pilot described in the MVP analysis |
+
+Items 1-4 do not block writing or reviewing this design; they block
+building and submitting. Item 5 is the decision this document asks for.
