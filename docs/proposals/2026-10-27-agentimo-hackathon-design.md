@@ -107,3 +107,89 @@ cheaper and has no model-access dependency, and it is the fallback if
 the experiment in section E fails. It is not recommended as the primary
 because it demonstrates nothing the prepared prototype does not already
 show, and it leaves the entry-friction risk unaddressed.
+
+## C. Minimal technical design
+
+### C.1 Diagram
+
+```text
+Agent browser
+  |  free text / corrected draft / payment confirmation
+  v
+Single web application (one process, server-rendered pages)
+  |-- Interpretation adapter ----> Meta model endpoint (one call)
+  |     returns proposed fields only; no persistence, no money math
+  |-- Deterministic engine (pure functions, integer cents)
+  |-- Record store (single database, owner-scoped rows)
+  v
+Forecast view: commission | bank inflow | to protect | really available
+```
+
+No other services. No queue, no vector store, no orchestration, no
+second agent: none is needed by any step of the journey.
+
+### C.2 Components
+
+- **Web application.** Serves the three screens of the journey (describe
+  and confirm; forecast; record payment), following the UX spec's core
+  journey wording and labels. Implementation language and framework are
+  chosen at build time for the smallest deployable unit the team can
+  run; this departs deliberately from the planned Laravel/PostgreSQL
+  foundation, which is commercial scope, not demonstration scope
+  (section D). The departure is safe because no foundation behaviour
+  (accounts, billing, isolation at two layers, lapse, erasure) is
+  claimed by the demo.
+- **Deterministic engine.** A direct, reduced implementation of the
+  product core spec section 5: integer cents, exact decimal rates,
+  half-up rounding per component, IVA and retencao from the agent's
+  own settings, reserves floored as specified, four labelled outputs.
+  One negocio, one expected part, expenses entered as a single monthly
+  total (expected or paid) — enough for the journey; split parts,
+  recurring rules, replacement chains, and history are out (section D).
+  Settings are entered once by the agent; the model never supplies
+  rates, tax values, or missing facts.
+- **Record store.** One database holding, per demonstration user: the
+  confirmed negocio, its settings snapshot used for expected figures,
+  and at most one settlement (received amount, date, frozen outputs).
+  Records are created only by explicit confirmation. Synthetic data
+  only for the public demonstration; if real pilot data is ever used,
+  per-user isolation and access control become a precondition, not part
+  of this design.
+
+### C.3 The AI step, precisely
+
+- **Input:** the agent's free text (length-capped) plus the field schema.
+  No financial records, no documents, no PDFs.
+- **Output:** a JSON object proposing only: negocio name, agency name,
+  agency commission base (EUR, as stated), agent share percentage (as
+  stated), expected month, stage (potencial / provavel / confirmado).
+  Any field not stated in the text must be returned as null, never
+  guessed.
+- **Validation (deterministic, before display):** schema and type check;
+  amounts parsed to integer cents by code, rejecting ambiguous formats
+  rather than cleaning them; share within 0-100%; month a real future
+  or current month; stage one of the three codes. A field failing
+  validation is shown empty and marked for the agent to fill.
+- **Ambiguity handling:** null or invalid fields are presented as
+  questions on the confirmation screen, beside the source text. The
+  model is not re-asked to guess.
+- **Confirmation:** the agent edits and confirms; only then is a record
+  created and the engine run. This is the boundary: the model proposes,
+  deterministic code validates and calculates, the human decides.
+- **Failure behaviour:** on timeout, error, or invalid output, the same
+  screen falls back to manual structured entry pre-filled with any
+  valid fields. The journey never blocks on the model.
+- **Limits:** one call per submission, no automatic retries, a fixed
+  output-token cap sized to the schema, a request timeout. Call and
+  token counts are logged without the text content.
+
+### C.4 Data flow and failure handling
+
+Free text -> interpretation -> validated draft -> agent confirmation ->
+engine -> forecast. Payment: agent-entered actuals -> engine frozen
+settlement -> received/available view. Engine failure or invalid
+settings (for example rates outside 0-100%) refuses confirmation with
+the field error shown; nothing partial is saved. Model unavailability
+degrades to manual entry (C.3). Persistence failure saves nothing and
+says so; re-submission is safe because records are created only by the
+single confirmation action carrying a client-generated idempotency key.
