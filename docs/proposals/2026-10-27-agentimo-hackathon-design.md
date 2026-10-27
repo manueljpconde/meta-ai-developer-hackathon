@@ -46,3 +46,64 @@ Conclusions from the evidence:
    departure from the MVP's "no AI" decision and from no other boundary:
    it does not change the receipt assistant's exclusion of OCR/LLM
    extraction, because it never reads fiscal documents.
+
+## B. Recommendation
+
+**Decision requested:** approve one primary journey for the hackathon —
+"describe a deal in your own words, see what is really yours" — and
+approve the explicit departure from the original MVP's exclusion of AI,
+limited to interpretation of the agent's own free text. No other
+existing decision is changed.
+
+The journey, end to end:
+
+1. The agent pastes or types an unstructured description, for example a
+   note or message: "Sold T2 in Alvalade through Agency X, agency
+   commission 8,000 EUR plus IVA, my share 50%, expected November,
+   confirmed."
+2. One model call proposes the structured negocio fields (section C.3).
+   Amounts are extracted, never calculated, by the model.
+3. The agent reviews the draft beside the source text, corrects any
+   field, and confirms. Nothing is a financial record before this
+   confirmation.
+4. Deterministic code runs the specified calculation rules and shows the
+   four distinct values for the expected month: commission, expected
+   bank inflow, money to protect, and really available — with the
+   breakdown, exactly as specified in the product core spec section 5.5.
+5. The agent records the payment when it arrives (actual amount and
+   date, explicit confirmation; residual handled by the specified
+   resolution choices, simplified to still-due / smaller / larger
+   commission), and sees received versus expected and the updated
+   available figure.
+
+Concrete benefit: the agent's real difficulty is translating scattered
+deal knowledge into the structured record that makes the forecast
+possible; the MVP analysis already targets under 60 seconds for manual
+entry and identifies manual-entry friction as the abandonment risk.
+AI removes the transcription step, not the judgement: the agent still
+confirms every field before any figure is computed.
+
+What AI contributes, compared with the same journey without AI: steps
+1-3 replace form-filling with review-and-correct. Without AI the demo
+is the existing prototype with a real engine behind it — credible, but
+indistinguishable from a form. With AI the demonstration shows the
+product interpreting real-world messiness safely, with deterministic
+money math the model never touches. That maps to the supplied judging
+emphasis on creativity and technical ambition while "whether the
+project works" rests on the deterministic core; for a production-
+readiness reading, the same boundary (model proposes, code decides,
+human confirms) is the defensible property. Track selection is not
+established (section G), so no track-specific claim is made.
+
+New hackathon contribution: the interpretation step, its validation
+and confirmation design, and a working deterministic engine behind the
+already-specified journey. Pre-existing code and specifications are
+reused as evidence and fixtures, subject to the unverified rules on
+pre-existing code (section G).
+
+Simplest credible alternative, for comparison: ship the deterministic
+journey with manual structured entry only (no model call). It is
+cheaper and has no model-access dependency, and it is the fallback if
+the experiment in section E fails. It is not recommended as the primary
+because it demonstrates nothing the prepared prototype does not already
+show, and it leaves the entry-friction risk unaddressed.
