@@ -81,3 +81,59 @@ def calc_part(part_base, iva_rate="0", retencao_rate="0", irs_rate="0",
         "other": other,
         "protected_money": protected_money,
     }
+
+
+def calc_month(parts, expenses=0):
+    """Aggregate one month from already-rounded part components.
+
+    Each part is calculated independently and the cent components are
+    summed without re-rounding. Really available is bank inflow minus
+    protected money minus expenses and may be negative.
+    """
+    expense_cents = _check_amount(expenses, "expenses")
+    if expense_cents < 0:
+        raise ValueError("expenses must not be negative")
+    if not isinstance(parts, (list, tuple)):
+        raise ValueError("parts must be a list of part dicts")
+    if len(parts) == 0:
+        raise ValueError("parts must not be empty")
+
+    commission = 0
+    bank_inflow = 0
+    iva_total = 0
+    irs_reserve_total = 0
+    ss_reserve_total = 0
+    other_totals = {}
+    for part in parts:
+        if not isinstance(part, dict):
+            raise ValueError("each part must be a dict")
+        result = calc_part(
+            part.get("part_base", 0),
+            part.get("iva_rate", "0"),
+            part.get("retencao_rate", "0"),
+            part.get("irs_rate", "0"),
+            part.get("ss_rate", "0"),
+            part.get("other_rates"),
+        )
+        # calc_part already validated part_base as integer cents.
+        commission += part.get("part_base", 0)
+        bank_inflow += result["bank_inflow"]
+        iva_total += result["iva"]
+        irs_reserve_total += result["irs_reserve"]
+        ss_reserve_total += result["ss_reserve"]
+        for name, value in result["other"].items():
+            other_totals[name] = other_totals.get(name, 0) + value
+    protected_money = (iva_total + irs_reserve_total + ss_reserve_total
+                       + sum(other_totals.values()))
+    return {
+        "commission": commission,
+        "bank_inflow": bank_inflow,
+        "protected_money": protected_money,
+        "protected_breakdown": {
+            "iva": iva_total,
+            "irs_reserve": irs_reserve_total,
+            "ss_reserve": ss_reserve_total,
+            "other": other_totals,
+        },
+        "really_available": bank_inflow - protected_money - expense_cents,
+    }
