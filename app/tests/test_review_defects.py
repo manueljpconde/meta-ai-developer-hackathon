@@ -97,17 +97,9 @@ class ExactStorageTest(AppTestCase):
         self.assertEqual(review.code, 200, review.body[:300])
         return review
 
-    def confirm_as_typed(self, review_body):
-        """Confirm posting the typed values, as a browser would."""
-        params = hidden_inputs(review_body)
-        params["csrf_token"] = csrf_token(review_body)
-        params.update(DEAL_PT)
-        params["name"] = ENTITY
-        return self.client.post("/deals/confirm", params)
-
     def test_entity_stored_exactly(self):
         review = self.review_entity()
-        response = self.confirm_as_typed(review.body)
+        response = self.confirm(review.body)
         self.assertEqual(response.code, 303, response.body[:300])
         stored = store.list_deals(self.db_path)
         self.assertEqual(len(stored), 1)
@@ -115,7 +107,7 @@ class ExactStorageTest(AppTestCase):
 
     def test_entity_shown_escaped_once(self):
         review = self.review_entity()
-        response = self.confirm_as_typed(review.body)
+        response = self.confirm(review.body)
         self.assertEqual(response.code, 303, response.body[:300])
         body = self.client.get("/?month=2026-11").body
         self.assertIn(ESCAPED_ENTITY, body)
