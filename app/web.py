@@ -113,7 +113,7 @@ def format_edit_amount(cents, lang):
 
 def format_edit_percent(rate, lang):
     percent = Decimal(rate) * 100
-    text = str(percent.normalize()) if percent == percent.to_integral_value() else str(percent.normalize())
+    text = format(percent.normalize(), "f")
     if lang == "pt-PT":
         return text.replace(".", ",")
     return text
