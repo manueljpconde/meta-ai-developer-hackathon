@@ -1,27 +1,27 @@
 """WSGI application for the first Agentimo screens.
 
 Standard library only. Every figure comes from ``engine.calc``; the
-only arithmetic here is parsing input text and deriving one deal's
-share in cents from its commission and percentage with exact
-decimals. All HTML output is escaped, every POST carries a CSRF
-token tied to a session cookie, SQL uses parameters only, and
-responses carry the security headers.
+only work here is parsing input text. All HTML output is escaped,
+every POST carries a CSRF token tied to a session cookie, SQL uses
+parameters only, and responses carry the security headers.
 """
 
 import html
 import os
 import re
 import secrets
-from decimal import Decimal, ROUND_HALF_UP
-from urllib.parse import parse_qsl
+from decimal import Decimal
+from urllib.parse import parse_qsl, quote, unquote
 
 from app import i18n, store
-from engine.calc import calc_month
+from engine.calc import agent_share, calc_month
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "agentimo.db"))
 
 STAGES = ("potencial", "provavel", "confirmado")
+
+MAX_TEXT_CHARS = 200
 
 SESSIONS = {}
 
@@ -39,8 +39,15 @@ def esc(value):
     return html.escape(str(value), quote=True)
 
 
-def unescape_fields(fields):
-    return {key: html.unescape(value) for key, value in fields.items()}
+MAX_BODY_BYTES = 65536
+
+
+class BodyTooLarge(Exception):
+    """A request body over the limit, refused before being read."""
+
+
+class BadBodyEncoding(Exception):
+    """A request body that is not valid UTF-8."""
 
 
 def parse_amount(text, locale):
@@ -77,12 +84,6 @@ def parse_percent(text, locale):
 def rate_string(percent):
     """Store a percentage as an exact decimal rate string."""
     return str(percent / 100)
-
-
-def derive_share(commission_cents, share_rate):
-    """One deal's share in cents, half-up, with exact decimals."""
-    return int((Decimal(commission_cents) * Decimal(share_rate)).quantize(
-        Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def group_integer(value, lang):
@@ -161,16 +162,30 @@ def single_figures(part_base, settings, expenses_cents):
 
 
 def read_form(environ):
+    """Read form fields, refusing oversized or non-UTF-8 bodies.
+
+    A body over ``MAX_BODY_BYTES`` raises ``BodyTooLarge`` before
+    anything is read; a body that is not valid UTF-8 raises
+    ``BadBodyEncoding``. Values are kept exactly as submitted.
+    """
     try:
-        length = int(environ.get("CONTENT_LENGTH", "0") or 0)
-    except ValueError:
+        length = int(str(environ.get("CONTENT_LENGTH", "0") or 0).strip())
+    except (TypeError, ValueError):
         length = 0
+    if length < 0:
+        length = 0
+    if length > MAX_BODY_BYTES:
+        raise BodyTooLarge()
     raw = environ.get("wsgi.input").read(length) if length > 0 else b""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise BadBodyEncoding()
     fields = {}
-    for key, value in parse_qsl(raw.decode("utf-8"), keep_blank_values=True):
+    for key, value in parse_qsl(text, keep_blank_values=True):
         if key not in fields:
             fields[key] = value
-    return unescape_fields(fields)
+    return fields
 
 
 def read_query(environ):
@@ -259,6 +274,15 @@ def error_span(message):
     return '<span class="error">%s</span>' % esc(message)
 
 
+def hidden_value(value):
+    """Encode a value for a hidden input, keeping the round-trip exact.
+
+    Percent-encoding keeps markup out of the review page source while
+    decoding on confirm gives back exactly the submitted text.
+    """
+    return quote(str(value), safe="")
+
+
 def settings_form(lang, csrf, values, errors):
     def field(name, key):
         return (
@@ -312,7 +336,7 @@ def deal_form(lang, csrf, values, errors, settings):
         '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
         '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
         '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
-        '<input id="deal-agency" name="agency" value="%s"></div>'
+        '<input id="deal-agency" name="agency" value="%s">%s</div>'
         '<button type="submit" data-i18n="btn_review">%s</button>'
         "</form>"
         % (
@@ -329,6 +353,7 @@ def deal_form(lang, csrf, values, errors, settings):
             esc(i18n.text(lang, "f_stage")), "".join(stages),
             error_span(errors.get("stage", "")),
             esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")),
+            error_span(errors.get("agency", "")),
             esc(i18n.text(lang, "btn_review")),
         )
     )
@@ -373,7 +398,7 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
             i18n.text(lang, "stale_msg"))
     hidden = "".join(
         '<input type="hidden" name="%s" value="%s">'
-        % (name, esc(fields.get(name, "")))
+        % (name, hidden_value(fields.get(name, "")))
         for name in ("name", "commission", "share", "month", "stage",
                      "agency", "form_locale")
     )
@@ -468,6 +493,8 @@ def validate_deal(lang, fields, form_locale):
     name = fields.get("name", "").strip()
     if not name:
         errors["name"] = i18n.text(lang, "err_name")
+    elif len(name) > MAX_TEXT_CHARS:
+        errors["name"] = i18n.text(lang, "err_too_long")
     else:
         parsed["name"] = fields.get("name", "").strip()
     commission_text = fields.get("commission", "")
@@ -503,6 +530,8 @@ def validate_deal(lang, fields, form_locale):
     else:
         parsed["stage"] = fields.get("stage", "")
     parsed["agency"] = fields.get("agency", "").strip()
+    if len(parsed["agency"]) > MAX_TEXT_CHARS:
+        errors["agency"] = i18n.text(lang, "err_too_long")
     return errors, parsed
 
 
@@ -579,6 +608,36 @@ def application(environ, start_response):
         )
         return respond("403 Forbidden", body)
 
+    def too_large():
+        body = page(
+            lang, session["csrf"],
+            i18n.text(lang, "refused_title"),
+            '<h1 data-i18n="refused_title">%s</h1>'
+            '<p data-i18n="refused_msg">%s</p>'
+            % (esc(i18n.text(lang, "refused_title")),
+               esc(i18n.text(lang, "refused_msg"))),
+        )
+        return respond("413 Content Too Large", body)
+
+    def bad_request():
+        body = page(
+            lang, session["csrf"],
+            i18n.text(lang, "refused_title"),
+            '<h1 data-i18n="refused_title">%s</h1>'
+            '<p data-i18n="refused_msg">%s</p>'
+            % (esc(i18n.text(lang, "refused_title")),
+               esc(i18n.text(lang, "refused_msg"))),
+        )
+        return respond("400 Bad Request", body)
+
+    def read_post_form():
+        try:
+            return read_form(environ)
+        except BodyTooLarge:
+            return too_large()
+        except BadBodyEncoding:
+            return bad_request()
+
     def csrf_ok(fields):
         return fields.get("csrf_token", "") == session["csrf"]
 
@@ -629,7 +688,9 @@ def application(environ, start_response):
         return respond("200 OK", body)
 
     if path == "/language" and method == "POST":
-        fields = read_form(environ)
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
         if not csrf_ok(fields):
             return forbidden()
         chosen = fields.get("lang", "")
@@ -657,7 +718,9 @@ def application(environ, start_response):
         return respond("200 OK", body)
 
     if path == "/settings" and method == "POST":
-        fields = read_form(environ)
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
         if not csrf_ok(fields):
             return forbidden()
         form_locale = fields.get("form_locale", lang)
@@ -688,7 +751,9 @@ def application(environ, start_response):
         return respond("200 OK", body)
 
     if path == "/deals/review" and method == "POST":
-        fields = read_form(environ)
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
         if not csrf_ok(fields):
             return forbidden()
         form_locale = fields.get("form_locale", lang)
@@ -710,8 +775,8 @@ def application(environ, start_response):
                    deal_form(lang, session["csrf"], values, errors,
                              settings)))
             return respond("200 OK", body)
-        share_cents = derive_share(parsed["commission_cents"],
-                                   parsed["share_rate"])
+        share_cents = agent_share(parsed["commission_cents"],
+                                  parsed["share_rate"])
         result = single_figures(share_cents, settings,
                                 settings["expenses_cents"])
         key = secrets.token_urlsafe(16)
@@ -730,7 +795,13 @@ def application(environ, start_response):
         return respond("200 OK", body)
 
     if path == "/deals/confirm" and method == "POST":
-        fields = read_form(environ)
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if "shown_share" in fields and "idempotency_key" in fields:
+            for name in ("name", "commission", "share", "month", "stage",
+                         "agency", "form_locale"):
+                fields[name] = unquote(fields.get(name, ""))
         if not csrf_ok(fields):
             return forbidden()
         form_locale = fields.get("form_locale", lang)
@@ -748,8 +819,8 @@ def application(environ, start_response):
                 lang, session["csrf"], i18n.text(lang, "deal_title"),
                 deal_form(lang, session["csrf"], values, errors, settings))
             return respond("200 OK", body)
-        share_cents = derive_share(parsed["commission_cents"],
-                                   parsed["share_rate"])
+        share_cents = agent_share(parsed["commission_cents"],
+                                  parsed["share_rate"])
         result = single_figures(share_cents, settings,
                                 settings["expenses_cents"])
         try:

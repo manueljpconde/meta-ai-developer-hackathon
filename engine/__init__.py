@@ -5,8 +5,8 @@ strings. Rounding is half-up to the cent, applied to each component
 independently. The functions are pure: no I/O, no clock, no global state.
 """
 
-from engine.calc import calc_month, calc_part
+from engine.calc import agent_share, calc_month, calc_part
 
 ENGINE_VERSION = 1
 
-__all__ = ["ENGINE_VERSION", "calc_month", "calc_part"]
+__all__ = ["ENGINE_VERSION", "agent_share", "calc_month", "calc_part"]

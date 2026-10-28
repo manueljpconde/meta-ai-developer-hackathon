@@ -85,6 +85,15 @@ def calc_part(part_base, iva_rate="0", retencao_rate="0", irs_rate="0",
     }
 
 
+def agent_share(agency_base, share_rate):
+    """One deal's share in integer cents, half-up, with exact decimals."""
+    base = _check_amount(agency_base, "agency_base")
+    if base < 0:
+        raise ValueError("agency_base must not be negative")
+    rate = _parse_rate(share_rate, "share_rate")
+    return _component(base, rate)
+
+
 def calc_month(parts, expenses=0):
     """Aggregate one month from already-rounded part components.
 
