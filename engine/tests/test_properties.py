@@ -131,6 +131,20 @@ class RefusalTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             calc_part(100, "0", "0", "0", "0", {"fundo": "2"})
 
+    def test_nonfinite_rates_refused(self):
+        for rate in ("NaN", "sNaN", "Infinity", "-Infinity"):
+            with self.subTest(rate=rate):
+                with self.assertRaises(ValueError):
+                    calc_part(100000, rate, "0", "0", "0")
+
+    def test_nan_rate_via_month_refused(self):
+        with self.assertRaises(ValueError):
+            calc_month([{"part_base": 100000, "iva_rate": "NaN"}])
+
+    def test_missing_part_base_refused(self):
+        with self.assertRaises(ValueError):
+            calc_month([{"iva_rate": "0.23"}])
+
     def test_negative_expenses_refused(self):
         with self.assertRaises(ValueError):
             calc_month([simple_part(100)], expenses=-1)
