@@ -100,6 +100,15 @@ def calc_month(parts, expenses=0):
     if len(parts) == 0:
         raise ValueError("parts must not be empty")
 
+    allowed_keys = frozenset((
+        "part_base",
+        "iva_rate",
+        "retencao_rate",
+        "irs_rate",
+        "ss_rate",
+        "other_rates",
+    ))
+
     commission = 0
     bank_inflow = 0
     iva_total = 0
@@ -111,6 +120,9 @@ def calc_month(parts, expenses=0):
             raise ValueError("each part must be a dict")
         if "part_base" not in part:
             raise ValueError("each part must include part_base")
+        for key in part:
+            if key not in allowed_keys:
+                raise ValueError("unknown part key: " + str(key))
         part_base = part["part_base"]
         result = calc_part(
             part_base,
