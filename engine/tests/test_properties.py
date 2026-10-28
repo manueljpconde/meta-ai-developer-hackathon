@@ -93,6 +93,13 @@ class MonthlyShapeTest(unittest.TestCase):
         self.assertEqual(month["protected_money"], 0)
         self.assertEqual(month["really_available"], 100000)
 
+    def test_missing_optional_rates_default_to_zero(self):
+        month = calc_month([{"part_base": 100000}])
+        self.assertEqual(month["commission"], 100000)
+        self.assertEqual(month["bank_inflow"], 100000)
+        self.assertEqual(month["protected_money"], 0)
+        self.assertEqual(month["really_available"], 100000)
+
 
 class RefusalTest(unittest.TestCase):
     def test_float_rate_refused(self):
@@ -144,6 +151,17 @@ class RefusalTest(unittest.TestCase):
     def test_missing_part_base_refused(self):
         with self.assertRaises(ValueError):
             calc_month([{"iva_rate": "0.23"}])
+
+    def test_unknown_case_key_refused(self):
+        with self.assertRaises(ValueError) as ctx:
+            calc_month([{"part_base": 100000, "IVA_rate": "0.23"}])
+        self.assertIn("IVA_rate", str(ctx.exception))
+
+    def test_unknown_extra_key_refused(self):
+        with self.assertRaises(ValueError) as ctx:
+            calc_month([{"part_base": 100000, "iva_rate": "0.23",
+                         "note": "x"}])
+        self.assertIn("note", str(ctx.exception))
 
     def test_negative_expenses_refused(self):
         with self.assertRaises(ValueError):
