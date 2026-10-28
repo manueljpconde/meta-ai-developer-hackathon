@@ -25,6 +25,8 @@ def _parse_rate(value, name):
             raise ValueError(name + " is not a valid decimal rate")
     else:
         raise TypeError(name + " must be a decimal string")
+    if not rate.is_finite():
+        raise ValueError(name + " must be a finite decimal rate")
     if rate < 0 or rate > 1:
         raise ValueError(name + " must be between 0 and 1")
     return rate
@@ -107,8 +109,11 @@ def calc_month(parts, expenses=0):
     for part in parts:
         if not isinstance(part, dict):
             raise ValueError("each part must be a dict")
+        if "part_base" not in part:
+            raise ValueError("each part must include part_base")
+        part_base = part["part_base"]
         result = calc_part(
-            part.get("part_base", 0),
+            part_base,
             part.get("iva_rate", "0"),
             part.get("retencao_rate", "0"),
             part.get("irs_rate", "0"),
@@ -116,7 +121,7 @@ def calc_month(parts, expenses=0):
             part.get("other_rates"),
         )
         # calc_part already validated part_base as integer cents.
-        commission += part.get("part_base", 0)
+        commission += part_base
         bank_inflow += result["bank_inflow"]
         iva_total += result["iva"]
         irs_reserve_total += result["irs_reserve"]
