@@ -1,0 +1,40 @@
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  margin: 0 auto;
+  max-width: 40rem;
+  padding: 1rem;
+}
+
+header nav a {
+  margin-right: 1rem;
+}
+
+.lang {
+  margin-top: 0.5rem;
+}
+
+.error {
+  display: block;
+  font-weight: bold;
+}
+
+.notice {
+  border: 1px solid currentColor;
+  font-weight: bold;
+  padding: 0.5rem;
+}
+
+label {
+  display: block;
+  margin-top: 0.75rem;
+}
+
+input, select, button {
+  font: inherit;
+  margin-top: 0.25rem;
+}
+
+button {
+  margin-top: 1rem;
+}
