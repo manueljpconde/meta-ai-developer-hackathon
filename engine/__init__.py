@@ -1,0 +1,12 @@
+"""Deterministic calculation engine.
+
+Money is integer cents everywhere and rates are exact decimals given as
+strings. Rounding is half-up to the cent, applied to each component
+independently. The functions are pure: no I/O, no clock, no global state.
+"""
+
+from engine.calc import calc_month, calc_part
+
+ENGINE_VERSION = 1
+
+__all__ = ["ENGINE_VERSION", "calc_month", "calc_part"]
