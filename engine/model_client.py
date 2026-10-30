@@ -48,6 +48,32 @@ def _api_base():
     return os.environ.get(API_BASE_ENV_VAR, API_BASE_DEFAULT)
 
 
+def build_interpret_context(current_month, records):
+    """Per-request prompt context: month, deals and month tables (T3).
+
+    Names the current month (``YYYY-MM``), the registered deal names
+    with their expected months, and the Portuguese and English month
+    names with the next-occurrence rule for bare names.
+    """
+    from engine.nl_move import EN_MONTH_NAMES, PT_MONTH_NAMES
+
+    lines = ["Current month: %s." % current_month]
+    if records:
+        deals = ", ".join(
+            "%s (expected %s)" % (entry.get("deal", ""),
+                                  entry.get("month", ""))
+            for entry in records)
+        lines.append("Registered deals: %s." % deals)
+    else:
+        lines.append("No registered deals.")
+    lines.append("Months (Portuguese): %s."
+                 % ", ".join(PT_MONTH_NAMES))
+    lines.append("Months (English): %s." % ", ".join(EN_MONTH_NAMES))
+    lines.append("A month named without a year means its next occurrence "
+                 "from the current month.")
+    return " ".join(lines)
+
+
 def _read_content(body):
     """Extract the model text from a chat response body."""
     try:
@@ -77,7 +103,7 @@ def _read_content(body):
 class MetaMoveClient(MoveModelClient):
     """Live interpretation client for model ``muse-spark-1.3``."""
 
-    def __init__(self, api_key=None, timeout=30):
+    def __init__(self, api_key=None, timeout=30, context=""):
         key = api_key if api_key is not None else os.environ.get(
             API_KEY_ENV_VAR)
         if not key or not str(key).strip():
@@ -86,15 +112,19 @@ class MetaMoveClient(MoveModelClient):
         self.api_key = key
         self.model = MODEL_NAME
         self.timeout = timeout
+        self.context = context or ""
 
     def interpret_move(self, sentence):
         """Ask the model to turn one sentence into a move or question."""
         if not isinstance(sentence, str) or not sentence.strip():
             raise ModelError("a move sentence is needed")
+        system = SYSTEM_PROMPT
+        if self.context.strip():
+            system += " " + self.context.strip()
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": sentence.strip()},
             ],
             "temperature": 0,
