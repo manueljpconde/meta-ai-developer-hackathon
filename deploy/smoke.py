@@ -15,7 +15,6 @@ Usage: ``python3 deploy/smoke.py https://agentimo.example.com``
 """
 
 import html.parser
-import re
 import sys
 import urllib.error
 import urllib.parse
