@@ -15,6 +15,7 @@ from urllib.parse import parse_qsl, quote, unquote
 
 from app import i18n, store
 from engine.calc import agent_share, calc_month
+from engine.move import move_payment
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "agentimo.db"))
@@ -487,6 +488,105 @@ def forecast_section(lang, month, deals, expenses_cents):
     )
 
 
+MOVE_EXAMPLE_CURRENT = "2026-11"
+MOVE_EXAMPLE_MONTH = "2026-11"
+MOVE_EXAMPLE_TARGET = "2026-12"
+MOVE_EXAMPLE_EXPENSES = 35000
+
+
+def move_example_result():
+    """One example move, shown with its before and after forecast."""
+    records = [
+        {
+            "deal": "T2 Campo de Ourique",
+            "payment": "part-1",
+            "month": MOVE_EXAMPLE_MONTH,
+            "part_base": 500000,
+            "received": False,
+            "iva_rate": "0.23",
+            "retencao_rate": "0.25",
+            "irs_rate": "0.30",
+            "ss_rate": "0.10",
+        },
+    ]
+    move = {
+        "deal": "T2 Campo de Ourique",
+        "payment": "part-1",
+        "target_month": MOVE_EXAMPLE_TARGET,
+    }
+    return move_payment(records, move, MOVE_EXAMPLE_CURRENT,
+                        expenses_cents=MOVE_EXAMPLE_EXPENSES)
+
+
+def move_example_page(lang):
+    """Render the example move with its before and after forecast.
+
+    The before forecast holds the payment in November 2026; the after
+    forecast is the engine's own recalculation with the payment moved
+    to December 2026. Both figures come from the engine; nothing here
+    is saved.
+    """
+    outcome = move_example_result()
+    moved = outcome["moved"]
+    before = calc_month(
+        [{
+            "part_base": 500000,
+            "iva_rate": "0.23",
+            "retencao_rate": "0.25",
+            "irs_rate": "0.30",
+            "ss_rate": "0.10",
+        }],
+        expenses=MOVE_EXAMPLE_EXPENSES,
+    )
+    after = outcome["forecast"][MOVE_EXAMPLE_TARGET]
+    section = (
+        "<section><h2>%s</h2>"
+        "<dl>"
+        '<dt data-i18n="m_commission">%s</dt><dd>%s</dd>'
+        '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
+        '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
+        '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
+        "</dl></section>"
+    )
+
+    def figures(month, figures_result, breakdown):
+        return section % (
+            esc(format_month(month, lang)),
+            esc(i18n.text(lang, "m_commission")),
+            esc(format_amount(figures_result["commission"], lang)),
+            esc(i18n.text(lang, "m_bank")),
+            esc(format_amount(figures_result["bank_inflow"], lang)),
+            esc(i18n.text(lang, "m_protected")),
+            esc(format_amount(figures_result["protected_money"], lang)),
+            esc(i18n.text(lang, "b_iva")),
+            esc(format_amount(breakdown["iva"], lang)),
+            esc(i18n.text(lang, "b_irs")),
+            esc(format_amount(breakdown["irs_reserve"], lang)),
+            esc(i18n.text(lang, "b_ss")),
+            esc(format_amount(breakdown["ss_reserve"], lang)),
+            esc(i18n.text(lang, "m_really")),
+            esc(format_amount(figures_result["really_available"], lang)),
+        )
+
+    return (
+        "<h1>%s</h1>"
+        "<p>%s</p>"
+        "%s%s"
+        % (
+            esc(i18n.text(lang, "move_title")),
+            esc("%s · %s → %s" % (
+                moved["deal"],
+                format_month(moved["from_month"], lang),
+                format_month(moved["target_month"], lang),
+            )),
+            figures(MOVE_EXAMPLE_MONTH, before,
+                    before["protected_breakdown"]),
+            figures(MOVE_EXAMPLE_TARGET, after,
+                    after["protected_breakdown"]),
+        )
+    )
+
+
 def validate_deal(lang, fields, form_locale):
     errors = {}
     parsed = {}
@@ -685,6 +785,11 @@ def application(environ, start_response):
         body = page(lang, session["csrf"], i18n.text(lang, "home_title"),
                     '<h1 data-i18n="home_title">%s</h1>%s'
                     % (esc(i18n.text(lang, "home_title")), sections))
+        return respond("200 OK", body)
+
+    if path == "/scenarios/move" and method == "GET":
+        body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
+                    move_example_page(lang))
         return respond("200 OK", body)
 
     if path == "/language" and method == "POST":
