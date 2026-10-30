@@ -1,0 +1,6 @@
+# Agentimo HTTPS front door. Replace the placeholder domain with the
+# real one, install as /etc/caddy/Caddyfile, then `systemctl reload caddy`.
+# Caddy terminates HTTPS automatically and proxies to the app on localhost.
+agentimo.example.com {
+	reverse_proxy 127.0.0.1:8000
+}
