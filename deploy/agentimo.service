@@ -1,0 +1,25 @@
+[Unit]
+Description=Agentimo first screens (python3 -m app.server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentimo
+Group=agentimo
+WorkingDirectory=/opt/agentimo
+Environment=APP_HOST=127.0.0.1
+Environment=APP_PORT=8000
+Environment=APP_DB_PATH=/var/lib/agentimo/agentimo.db
+EnvironmentFile=/etc/agentimo/env
+ExecStart=/usr/bin/python3 -m app.server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/agentimo
+
+[Install]
+WantedBy=multi-user.target

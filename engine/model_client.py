@@ -113,6 +113,10 @@ class MetaMoveClient(MoveModelClient):
                                         timeout=self.timeout) as reply:
                 body = reply.read()
         except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise ModelError(
+                    "the model key was refused (HTTP %d): check %s"
+                    % (exc.code, API_KEY_ENV_VAR))
             raise ModelError(
                 "the model call was refused (HTTP %d)" % exc.code)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
