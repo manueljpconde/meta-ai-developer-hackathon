@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, quote, unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app import i18n, store
-from engine.calc import agent_share
+from engine.calc import agent_share, calc_month
 from engine.model_client import MetaMoveClient, ModelError
 from engine.nl_move import plan_nl_move
 
