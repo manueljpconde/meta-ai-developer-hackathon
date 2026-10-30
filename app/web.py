@@ -15,7 +15,9 @@ from urllib.parse import parse_qsl, quote, unquote
 
 from app import i18n, store
 from engine.calc import agent_share, calc_month
+from engine.model_client import MetaMoveClient, ModelError
 from engine.move import move_payment
+from engine.nl_move import plan_nl_move
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "agentimo.db"))
@@ -126,6 +128,21 @@ def format_month(year_month, lang):
     if lang == "pt-PT":
         return "%s de %s" % (PT_MONTHS[index], year)
     return "%s %s" % (EN_MONTHS[index], year)
+
+
+NL_SENTENCE_MAX_CHARS = 500
+
+NL_CURRENT_MONTH_ENV = "APP_NL_CURRENT_MONTH"
+
+
+def nl_client():
+    """Build the live interpretation client for one request."""
+    return MetaMoveClient()
+
+
+def nl_current_month():
+    """Current month for NL move scenarios, from the environment."""
+    return os.environ.get(NL_CURRENT_MONTH_ENV, MOVE_EXAMPLE_CURRENT)
 
 
 def valid_month(text):
@@ -488,6 +505,133 @@ def forecast_section(lang, month, deals, expenses_cents):
     )
 
 
+def nl_sentence_form(lang, csrf, sentence=""):
+    """The one-sentence form starting a move scenario."""
+    return (
+        '<form method="post" action="/scenarios/move">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<div><label for="nl-sentence" data-i18n="nl_label">%s</label>'
+        '<input id="nl-sentence" name="sentence" value="%s" maxlength="%d">'
+        '<p>%s</p></div>'
+        '<button type="submit" data-i18n="nl_submit">%s</button>'
+        "</form>"
+        % (
+            esc(csrf),
+            esc(i18n.text(lang, "nl_label")),
+            esc(sentence),
+            NL_SENTENCE_MAX_CHARS,
+            esc(i18n.text(lang, "nl_hint")),
+            esc(i18n.text(lang, "nl_submit")),
+        )
+    )
+
+
+def nl_month_lines(lang, month, figures_result):
+    """One month with its four figures, for the NL before/after view."""
+    breakdown = figures_result["protected_breakdown"]
+    return (
+        "<h2>%s</h2>"
+        "<dl>"
+        '<dt data-i18n="m_commission">%s</dt><dd>%s</dd>'
+        '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
+        '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
+        '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
+        "</dl>"
+        % (
+            esc(format_month(month, lang)),
+            esc(i18n.text(lang, "m_commission")),
+            esc(format_amount(figures_result["commission"], lang)),
+            esc(i18n.text(lang, "m_bank")),
+            esc(format_amount(figures_result["bank_inflow"], lang)),
+            esc(i18n.text(lang, "m_protected")),
+            esc(format_amount(figures_result["protected_money"], lang)),
+            esc(i18n.text(lang, "b_iva")),
+            esc(format_amount(breakdown["iva"], lang)),
+            esc(i18n.text(lang, "b_irs")),
+            esc(format_amount(breakdown["irs_reserve"], lang)),
+            esc(i18n.text(lang, "b_ss")),
+            esc(format_amount(breakdown["ss_reserve"], lang)),
+            esc(i18n.text(lang, "m_really")),
+            esc(format_amount(figures_result["really_available"], lang)),
+        )
+    )
+
+
+def nl_move_result_page(lang, sentence, outcome):
+    """Render one NL move outcome: before/after, question or error."""
+    status = outcome.get("status")
+    if status == "moved":
+        moved = outcome["moved"]
+        sections = "".join(
+            "<section>%s</section>"
+            % nl_month_lines(lang, month, outcome["after"][month])
+            for month in sorted(outcome["after"])
+        )
+        before = "".join(
+            "<section>%s</section>"
+            % nl_month_lines(lang, month, outcome["before"][month])
+            for month in sorted(outcome["before"])
+        )
+        return (
+            "<p>%s</p>"
+            "<h2>%s</h2>%s"
+            "<h2>%s</h2>%s"
+            % (
+                esc("%s · %s → %s" % (
+                    moved["deal"],
+                    format_month(moved["from_month"], lang),
+                    format_month(moved["target_month"], lang),
+                )),
+                esc(i18n.text(lang, "nl_before")),
+                before,
+                esc(i18n.text(lang, "nl_after")),
+                sections,
+            )
+        )
+    if status == "question":
+        return '<p class="notice" role="alert">%s</p>' % esc(
+            outcome["question"])
+    return '<p class="notice" role="alert">%s</p>' % esc(
+        outcome.get("message", i18n.text(lang, "refused_msg")))
+
+
+def nl_records_from_deals(deals):
+    """Read stored deals as unpaid expected payment records.
+
+    Stored deals have no payment reference or received flag: each one
+    is one unpaid ``part-1`` payment, and the month comes from the
+    stored deal itself.
+    """
+    records = []
+    for deal in deals:
+        records.append({
+            "deal": deal["name"],
+            "payment": "part-1",
+            "month": deal["month"],
+            "part_base": deal["part_base"],
+            "received": False,
+            "iva_rate": deal["iva_rate"],
+            "retencao_rate": deal["retencao_rate"],
+            "irs_rate": deal["irs_rate"],
+            "ss_rate": deal["ss_rate"],
+        })
+    return records
+
+
+def _unused_interpret(sentence):
+    """Interpret stub that must never run: empty sentences ask first."""
+    raise AssertionError("the model must not be called for this sentence")
+
+
+def validate_nl_sentence(sentence):
+    """Refuse an empty or overlong move sentence before any model call."""
+    if sentence is None or not sentence.strip():
+        return "empty"
+    if len(sentence) > NL_SENTENCE_MAX_CHARS:
+        return "too_long"
+    return ""
+
+
 MOVE_EXAMPLE_CURRENT = "2026-11"
 MOVE_EXAMPLE_MONTH = "2026-11"
 MOVE_EXAMPLE_TARGET = "2026-12"
@@ -789,7 +933,44 @@ def application(environ, start_response):
 
     if path == "/scenarios/move" and method == "GET":
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
-                    move_example_page(lang))
+                    nl_sentence_form(lang, session["csrf"])
+                    + move_example_page(lang))
+        return respond("200 OK", body)
+
+    if path == "/scenarios/move" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        sentence = fields.get("sentence", "")
+        problem = validate_nl_sentence(sentence)
+        if problem == "empty":
+            outcome = plan_nl_move(
+                sentence, [], nl_current_month(), _unused_interpret)
+        elif problem == "too_long":
+            outcome = {
+                "status": "question",
+                "question": i18n.text(lang, "err_too_long"),
+            }
+        else:
+            settings = store.get_settings(DB_PATH)
+            expenses = settings["expenses_cents"] if settings else 0
+            deals = store.list_deals(DB_PATH)
+            records = nl_records_from_deals(deals)
+            try:
+                client = nl_client()
+            except ModelError as exc:
+                outcome = {"status": "error", "message": str(exc)}
+            else:
+                outcome = plan_nl_move(
+                    sentence, records, nl_current_month(),
+                    client.interpret_move, expenses_cents=expenses)
+        content = (nl_sentence_form(lang, session["csrf"], sentence)
+                   + nl_move_result_page(lang, sentence, outcome)
+                   + move_example_page(lang))
+        body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
+                    content)
         return respond("200 OK", body)
 
     if path == "/language" and method == "POST":
