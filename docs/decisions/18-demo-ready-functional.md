@@ -1,6 +1,9 @@
 # Demo-ready functional decisions (issue #18)
 
-Status: discovery proposal for owner approval. No design or build follows until approved.
+Status: discovery proposal approved by the owner with binding amendments
+Q1-Q5 and D3/D4 (recorded below); the design document
+`18-demo-ready-technical.md` implements them. No build follows until
+the owner approves the design.
 Scope: functional behaviour of the live product demo only. Technical choices belong
 to the design phase document.
 
@@ -20,40 +23,49 @@ Decision: the demo journey keeps the existing order and changes nothing stored.
 2. With no settings saved, registering a deal is refused with a prompt to
    define settings first, so the agent configures share, IVA, withholding,
    IRS and Social Security reserves, and monthly expenses before any deal.
+   A visible "Carregar exemplo / Load example" action (amendment Q1)
+   offers a shortcut: it creates example settings and two example
+   deals, so the visitor can try the demo without typing figures.
 3. The agent adds a deal (name, agency commission excl. IVA, own share,
    expected month, stage), reviews the computed figures, and confirms.
    Confirming twice with the same key saves once.
 4. The forecast page lists one section per month with the deal and the four
    figures (see D4).
-5. The move scenario page (`/scenarios/move`) shows one sentence form plus a
-   worked example. Posting a sentence returns one of three outcomes on the
-   same page: a before/after forecast, one focused question, or an error.
-   Nothing stored ever changes, whatever the outcome.
+5. The move scenario page (`/scenarios/move`) shows one sentence form.
+   Example data comes only from the Q1 action (amendment Q3); there is
+   no fixed worked example on the page. Posting a sentence returns one
+   of three outcomes on the same page: a before/after forecast, one
+   focused question, or an error. Nothing stored ever changes,
+   whatever the outcome.
 
 Options considered: (a) a guided demo mode that pre-fills settings and a
-deal; (b) keeping the real registration path end to end. Chosen (b), because
-the demo must prove the real product path a visitor would follow, and a
-parallel demo mode would demonstrate behaviour the product does not have.
+deal; (b) keeping the real registration path end to end; (c) the real
+path plus the Q1 example-loading shortcut. Chosen (c) per the owner's
+binding amendment: the demo still proves the real product path, while
+the Q1 action gives a first-time visitor working data in one step.
 
 ## D2. How a sentence identifies one of the agent's own deals and payments
 
 Verified facts constraining every case below: each registered deal is read as
 exactly one unpaid expected payment (`part-1` in the deal's own month);
-matching inside the engine is exact on deal name and payment reference; any
-refusal from the engine surfaces as one focused question, never a guess; a
-model failure surfaces as an error, never a guess; an empty sentence asks
-which payment and month without calling the model; an overlong sentence is
-refused before any model call.
+any refusal from the engine surfaces as one focused question, never a
+guess; a model failure surfaces as an error, never a guess; an empty
+sentence asks which payment and month without calling the model; an
+overlong sentence is refused before any model call.
 
 Decision: the sentence is interpreted to a registered deal name, the payment
-`part-1`, and a target month; the engine match stays exact, and every
+`part-1`, and a target month. Matching ignores case and accents
+(amendment Q4): a name that resolves to exactly one registered deal
+moves it; zero matches ask naming the registered deals. A month named
+without a year means its next occurrence from the current month
+(amendment Q5). The engine match itself stays exact, and every
 non-match becomes one focused question.
 
-Options considered: (a) lenient matching (case-insensitive, substring) inside
-the product; (b) exact engine match with interpretation resolving wording to
-the registered name, questions otherwise. Chosen (b), because leniency risks
-moving the wrong payment silently, while a question keeps the demo honest
-about what was understood.
+Options considered: (a) exact matching only; (b) case- and
+accent-insensitive matching with interpretation resolving wording to
+the registered name, questions otherwise. Chosen (b) per the owner's
+binding amendment: the leniency covers typing on stage, while a
+question still guards every remaining ambiguity.
 
 ### D2a. Partial names
 
@@ -69,8 +81,8 @@ in a single follow-up sentence.
 ### D2b. Two deals that match
 
 Decision: when the wording matches two registered deals, the product moves
-nothing and asks one focused question distinguishing the candidates (for
-example by full name and expected month).
+nothing and asks one focused question naming both deals with their
+months (amendment Q4).
 
 Options considered: (a) move the first match; (b) move both; (c) ask one
 question. Chosen (c): (a) and (b) change the forecast on an ambiguous reading,
@@ -87,32 +99,26 @@ in the demo: the visitor simply names a deal they registered.
 
 ### D2d. Deal with no expected payments
 
-Decision: the move scenario only ever sees unpaid expected payments; received
-payments are excluded from the forecast by definition. A sentence that
-matches nothing unpaid therefore ends as one focused question, and nothing
-moves.
-
-Verified fact: registered deals are currently always read as unpaid
-(`received: False`), so every registered deal has expected money in this
-path. Options considered: (a) track received state per deal for the demo;
-(b) treat every registered deal as movable expected money and document the
-limitation. Chosen (b) for this phase: adding received-state tracking is a
-product change that belongs to design and build, not to demo wording. The
-open question Q2 below asks the owner whether the demo needs it.
+Decision (amendment Q2): every registered deal is treated as movable
+expected money. Registered deals are read as unpaid (`received:
+False`), so every registered deal has expected money in this path,
+and no received-state tracking is added for the demo.
 
 ## D3. The no-deals state
 
-Decision: with no registered deals, the forecast page shows the empty message
-with a link to register the first deal; the move scenario page still shows
-the sentence form and the worked example; posting a sentence with no deals
-yields one focused question inviting the visitor to register a deal first,
-and the model is never called for an empty sentence.
+Decision (amendments D3/D4): with no registered deals, the forecast page
+shows the empty message with a link to register the first deal; the
+move scenario page shows the sentence form plus a notice stating
+there are no deals yet, with links to register a deal (New deal /
+Novo negócio) and to the Q1 example action. Posting a sentence with
+no deals yields one focused question inviting the visitor to register
+a deal or load the example first, and the model is never called for
+an empty sentence.
 
 Options considered: (a) hide the scenario page until the first deal exists;
-(b) keep the page visible with the worked example. Chosen (b): a first-time
-visitor sees the headline capability before committing to data entry, and the
-example (fixed figures, see D4) demonstrates the before/after shape with no
-stored data.
+(b) keep the page visible with the notice and both links. Chosen (b):
+a first-time visitor sees the headline capability, and either link
+recovers the demo in one step.
 
 ## D4. What the forecast shows before and after
 
@@ -128,10 +134,9 @@ Options considered: (a) show only the two affected months; (b) show the full
 before and after forecasts. Chosen (b): the demo story is the forecast
 moving, and hiding unaffected months would conceal that nothing else changed.
 
-The worked example keeps its fixed figures (November 2026 to December 2026,
-5 000,00 commission basis) so the page is meaningful with zero registered
-deals. Assumption: the example months remain in the future relative to the
-demo date; Q3 asks the owner to confirm.
+The worked example is removed (amendment Q3): example data comes only
+from the Q1 action, so the page carries no fixed figures and no fixed
+example months.
 
 ## D5. Portuguese and English wording
 
@@ -148,8 +153,8 @@ Portuguese in both languages. Chosen (b): the terms refer to Portuguese
 obligations (IVA, IRS, Seguranca Social, withholding), and translating them
 risks implying a different fiscal meaning.
 
-The worked example sentence stays "Move the Benfica payment to January."
-in both languages, as today, so the hint doubles as a copy-paste demo input.
+The sentence hint names the first Q1 example deal with a bare month word,
+so the hint doubles as a copy-paste demo input through the Q5 rule.
 
 ## D6. What is out of scope
 
@@ -165,21 +170,20 @@ in both languages, as today, so the hint doubles as a copy-paste demo input.
 - Any change to the proof suites; both suites must stay green, proving the
   document touches nothing else.
 
-## Open questions for the owner (not guessed)
+## Owner amendments Q1-Q5 and D3/D4 (answered, binding)
 
-- Q1. Should the live demo preload the example deal (or the Benfica deal the
-  smoke check names) so the sentence works on first load, or must the
-  visitor register a deal first?
-- Q2. Must the demo show a deal with no expected payments distinctly (for
-  example a received deal), or is treating every registered deal as movable
-  expected money sufficient?
-- Q3. Are the worked example months still suitable for the demo date, or
-  should they move?
-- Q4. Should partial-name matching be more lenient than D2a (for example
-  ignoring case and accents), and if two deals still match, which wording
-  should the question use?
-- Q5. Which current month should the live scenario assume when a sentence
-  names a month without a year (for example "January")?
+- Q1. Add a visible "Carregar exemplo / Load example" action that
+  creates example settings and two deals. Applied in D1, D3, D4, D5;
+  implemented by the design document.
+- Q2. Every registered deal is movable expected money. Applied in D2d.
+- Q3. No fixed worked example; example data comes only from Q1.
+  Applied in D1, D3, D4, D5.
+- Q4. Matching ignores case and accents; if two deals still match,
+  the question names both with their months. Applied in D2 and D2b.
+- Q5. A month without a year means its next occurrence from the
+  current month. Applied in D2 and D5.
+- D3/D4. With no deals, the move page says so and links to New deal
+  and the Q1 action. Applied in D3.
 
 ## Traceability to the request
 
@@ -191,4 +195,5 @@ in both languages, as today, so the hint doubles as a copy-paste demo input.
 - Portuguese and English wording: D5.
 - Out of scope: D6.
 - Options and reasons per decision: recorded under each decision.
-- Owner-only questions: listed above, unanswered, for the owner.
+- Owner-only questions: answered by the binding amendments above; no open
+  owner questions remain.
