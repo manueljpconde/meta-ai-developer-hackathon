@@ -6,9 +6,12 @@ independently. The functions are pure: no I/O, no clock, no global state.
 """
 
 from engine.calc import agent_share, calc_month, calc_part
+from engine.model_client import MetaMoveClient, ModelError, MoveModelClient
 from engine.move import move_payment
+from engine.nl_move import plan_nl_move
 
 ENGINE_VERSION = 1
 
 __all__ = ["ENGINE_VERSION", "agent_share", "calc_month", "calc_part",
-           "move_payment"]
+           "move_payment", "plan_nl_move", "MoveModelClient",
+           "MetaMoveClient", "ModelError"]
