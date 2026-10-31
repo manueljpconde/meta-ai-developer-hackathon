@@ -395,6 +395,16 @@ def get_deal(path, deal_id, tenant_id):
     )
     return dict(zip(keys, row))
 
+def delete_deal(path, deal_id, tenant_id):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        cur = conn.execute("DELETE FROM deals WHERE id = ? AND tenant_id = ?", (deal_id, tenant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
 def months_with_deals(path, tenant_id=None):
     init_db(path)
     conn = _connect(path)
