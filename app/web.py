@@ -379,7 +379,19 @@ def lang_form(lang, csrf):
     )
 
 
-def page(lang, csrf, title, body):
+def nav(lang, current=""):
+    """The header navigation, marking the current page when known."""
+    links = []
+    for href, key in (("/", "nav_home"), ("/deals/new", "nav_new"),
+                      ("/scenarios/move", "nav_move"),
+                      ("/settings", "nav_settings")):
+        mark = ' aria-current="page"' if href == current else ""
+        links.append('<a href="%s" data-i18n="%s"%s>%s</a>'
+                     % (href, key, mark, esc(i18n.text(lang, key))))
+    return "<nav>" + " ".join(links) + "</nav>"
+
+
+def page(lang, csrf, title, body, current=""):
     return (
         "<!DOCTYPE html>"
         '<html lang="%s"><head><meta charset="utf-8">'
@@ -388,16 +400,9 @@ def page(lang, csrf, title, body):
         "<title>%s</title>"
         '<link rel="stylesheet" href="/static/style.css">'
         "</head><body>"
-        "<header><nav>"
-        '<a href="/" data-i18n="nav_home">%s</a> '
-        '<a href="/deals/new" data-i18n="nav_new">%s</a> '
-        '<a href="/settings" data-i18n="nav_settings">%s</a>'
-        "</nav>%s</header><main>%s</main></body></html>"
+        "<header>%s%s</header><main>%s</main></body></html>"
         % (
-            esc(lang), esc(title),
-            esc(i18n.text(lang, "nav_home")),
-            esc(i18n.text(lang, "nav_new")),
-            esc(i18n.text(lang, "nav_settings")),
+            esc(lang), esc(title), nav(lang, current),
             lang_form(lang, csrf), body,
         )
     )
@@ -941,6 +946,7 @@ def application(environ, start_response):
                    esc(i18n.text(lang, "home_new")),
                    esc(i18n.text(lang, "example_action")),
                    example_action(lang, session["csrf"])),
+                "/",
             )
             return respond("200 OK", body)
         sections = "".join(
@@ -950,7 +956,8 @@ def application(environ, start_response):
         )
         body = page(lang, session["csrf"], i18n.text(lang, "home_title"),
                     '<h1 data-i18n="home_title">%s</h1>%s'
-                    % (esc(i18n.text(lang, "home_title")), sections))
+                    % (esc(i18n.text(lang, "home_title")), sections),
+                    "/")
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "GET":
@@ -962,7 +969,8 @@ def application(environ, start_response):
                     % (esc(i18n.text(lang, "move_title")),
                        nl_sentence_form(lang, session["csrf"]),
                        notice,
-                       example_action(lang, session["csrf"])))
+                       example_action(lang, session["csrf"])),
+                    "/scenarios/move")
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "POST":
@@ -1005,7 +1013,7 @@ def application(environ, start_response):
                    + nl_move_result_page(lang, sentence, outcome)
                    + example_action(lang, session["csrf"]))
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
-                    content)
+                    content, "/scenarios/move")
         return respond("200 OK", body)
 
     if path == "/example" and method == "GET":
@@ -1051,7 +1059,8 @@ def application(environ, start_response):
                                                lang),
             }
         body = page(lang, session["csrf"], i18n.text(lang, "set_title"),
-                    settings_form(lang, session["csrf"], values, {}))
+                    settings_form(lang, session["csrf"], values, {}),
+                    "/settings")
         return respond("200 OK", body)
 
     if path == "/settings" and method == "POST":
@@ -1069,7 +1078,8 @@ def application(environ, start_response):
                       ("share", "iva", "retencao", "irs", "ss", "expenses")}
             body = page(lang, session["csrf"],
                         i18n.text(lang, "set_title"),
-                        settings_form(lang, session["csrf"], values, errors))
+                        settings_form(lang, session["csrf"], values, errors),
+                        "/settings")
             return respond("200 OK", body)
         store.save_settings(DB_PATH, {
             "share_rate": parsed["share"],
@@ -1084,7 +1094,8 @@ def application(environ, start_response):
     if path == "/deals/new" and method == "GET":
         settings = store.get_settings(DB_PATH)
         body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
-                    deal_form(lang, session["csrf"], {}, {}, settings))
+                    deal_form(lang, session["csrf"], {}, {}, settings),
+                    "/deals/new")
         return respond("200 OK", body)
 
     if path == "/deals/review" and method == "POST":
