@@ -40,6 +40,11 @@ def request_link(path, email, ip, lang="pt-PT", now=None, token=None):
         token = secrets.token_urlsafe(32)
     token_hash = hash_token(token)
     expires_at = now + LINK_EXPIRY_SECONDS
+    if ip:
+        try:
+            store.record_email_ip(path, email, ip)
+        except Exception:
+            pass
     try:
         store.create_login_link(path, token_hash, email, lang, now, expires_at)
     except Exception:

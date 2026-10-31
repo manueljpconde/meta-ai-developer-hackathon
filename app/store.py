@@ -67,15 +67,18 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     window_start REAL NOT NULL,
     count INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS email_ips (
+    email TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    UNIQUE(email, ip)
+);
 """
-
 
 def _connect(path):
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
-
 
 def init_db(path):
     conn = _connect(path)
@@ -98,7 +101,6 @@ def init_db(path):
         conn.commit()
     finally:
         conn.close()
-
 
 def save_settings(path, values, tenant_id=None):
     init_db(path)
@@ -171,7 +173,6 @@ def save_settings(path, values, tenant_id=None):
     finally:
         conn.close()
 
-
 def get_settings(path, tenant_id=None):
     init_db(path)
     conn = _connect(path)
@@ -199,7 +200,6 @@ def get_settings(path, tenant_id=None):
         "ss_rate": row[4],
         "expenses_cents": row[5],
     }
-
 
 def insert_deal(path, deal, tenant_id=None):
     init_db(path)
@@ -252,6 +252,38 @@ def insert_deal(path, deal, tenant_id=None):
     finally:
         conn.close()
 
+def update_deal(path, deal_id, tenant_id, fields):
+    """Update an existing deal scoped to tenant. Returns True if found and updated."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        cur = conn.execute(
+            "UPDATE deals SET name=?, agency=?, month=?, stage=?,"
+            " agency_commission_cents=?, share_rate=?, part_base=?,"
+            " share_rate_used=?, iva_rate=?, retencao_rate=?, irs_rate=?,"
+            " ss_rate=?, expenses_cents=? WHERE id=? AND tenant_id=?",
+            (
+                fields["name"],
+                fields["agency"],
+                fields["month"],
+                fields["stage"],
+                fields["agency_commission_cents"],
+                fields["share_rate"],
+                fields["part_base"],
+                fields["share_rate_used"],
+                fields["iva_rate"],
+                fields["retencao_rate"],
+                fields["irs_rate"],
+                fields["ss_rate"],
+                fields["expenses_cents"],
+                deal_id,
+                tenant_id,
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
 
 def count_deals(path, tenant_id=None):
     init_db(path)
@@ -264,7 +296,6 @@ def count_deals(path, tenant_id=None):
     finally:
         conn.close()
     return row[0]
-
 
 def list_deals(path, month=None, tenant_id=None):
     init_db(path)
@@ -328,7 +359,6 @@ def list_deals(path, month=None, tenant_id=None):
     )
     return [dict(zip(keys, row)) for row in rows]
 
-
 def get_deal(path, deal_id, tenant_id):
     """Fetch one deal by id scoped to tenant; returns None if not owned."""
     init_db(path)
@@ -365,7 +395,6 @@ def get_deal(path, deal_id, tenant_id):
     )
     return dict(zip(keys, row))
 
-
 def months_with_deals(path, tenant_id=None):
     init_db(path)
     conn = _connect(path)
@@ -398,7 +427,6 @@ def get_tenant_by_email(path, email):
         return None
     return {"id": row[0], "email": row[1], "created_at": row[2]}
 
-
 def get_or_create_tenant(path, email, now=None):
     if now is None:
         now = time.time()
@@ -420,7 +448,6 @@ def get_or_create_tenant(path, email, now=None):
     return {"id": row[0], "email": row[1], "created_at": row[2]}
 
 
-
 def delete_tenant(path, tenant_id):
     init_db(path)
     conn = _connect(path)
@@ -433,6 +460,14 @@ def delete_tenant(path, tenant_id):
         if email is not None:
             conn.execute("DELETE FROM login_links WHERE email = ?", (email,))
             conn.execute("DELETE FROM rate_limits WHERE key = ?", (email,))
+            # Delete IP-keyed rate_limits that were recorded for this tenant
+            try:
+                ips = conn.execute("SELECT ip FROM email_ips WHERE email = ?", (email,)).fetchall()
+                for (ip,) in ips:
+                    conn.execute("DELETE FROM rate_limits WHERE key = ?", (ip,))
+                conn.execute("DELETE FROM email_ips WHERE email = ?", (email,))
+            except sqlite3.OperationalError:
+                pass
         conn.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
         conn.commit()
     finally:
@@ -453,7 +488,6 @@ def create_login_link(path, token_hash, email, lang, created_at, expires_at):
     finally:
         conn.close()
 
-
 def list_login_links(path):
     init_db(path)
     conn = _connect(path)
@@ -466,7 +500,6 @@ def list_login_links(path):
         conn.close()
     keys = ("id", "token_hash", "email", "lang", "created_at", "expires_at", "used")
     return [dict(zip(keys, row)) for row in rows]
-
 
 def get_login_link(path, token_hash):
     init_db(path)
@@ -484,7 +517,6 @@ def get_login_link(path, token_hash):
     keys = ("id", "token_hash", "email", "lang", "created_at", "expires_at", "used")
     return dict(zip(keys, row))
 
-
 def mark_link_used(path, token_hash):
     init_db(path)
     conn = _connect(path)
@@ -501,7 +533,6 @@ def mark_link_used(path, token_hash):
 def _hash_session(session_id):
     return hashlib.sha256(session_id.encode()).hexdigest()
 
-
 def create_session(path, session_id, tenant_id, email, created_at, expires_at, csrf_token):
     init_db(path)
     conn = _connect(path)
@@ -515,7 +546,6 @@ def create_session(path, session_id, tenant_id, email, created_at, expires_at, c
         conn.commit()
     finally:
         conn.close()
-
 
 def get_session(path, session_id):
     init_db(path)
@@ -539,7 +569,6 @@ def get_session(path, session_id):
         "expires_at": row[4],
         "csrf_token": row[5],
     }
-
 
 def delete_session(path, session_id):
     init_db(path)
@@ -582,5 +611,22 @@ def check_rate_limit(path, kind, key, now, max_count, window_seconds=3600):
         )
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+def record_email_ip(path, email, ip):
+    """Record that ip was used in a request_link for email, for cleanup on deletion."""
+    if not ip or not email:
+        return
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO email_ips (email, ip) VALUES (?, ?)",
+            (email.strip().lower(), ip),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     finally:
         conn.close()

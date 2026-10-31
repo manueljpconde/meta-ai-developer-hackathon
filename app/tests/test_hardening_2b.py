@@ -1,5 +1,6 @@
 """Cross-tenant web-route tests: B sending A's deal id to every deal-changing route
-yields no data and leaves A's deal unchanged.
+yields no data and leaves A's deal unchanged. Deletion through typed-address
+page proves no tenant rows of any kind remain.
 """
 
 import unittest
@@ -18,7 +19,6 @@ def make_client(db_path, email):
     c.cookies["session"] = sid
     return c
 
-
 DEAL_A_ROWS = {
     "name": "Deal-Alpha",
     "commission": "10000,00",
@@ -28,17 +28,6 @@ DEAL_A_ROWS = {
     "agency": "Agency-A",
     "form_locale": "pt-PT",
 }
-
-DEAL_B_ROWS = {
-    "name": "Deal-Beta",
-    "commission": "8000,00",
-    "share": "50",
-    "month": "2026-12",
-    "stage": "potencial",
-    "agency": "Agency-B",
-    "form_locale": "pt-PT",
-}
-
 
 class CrossTenantWebRouteTest(AppTestCase):
     def _seed_deal_for(self, email):
@@ -56,99 +45,99 @@ class CrossTenantWebRouteTest(AppTestCase):
         client.post("/deals/confirm", h)
         return client
 
-    def _count_for(self, email):
+    def _deals_for(self, email):
         from app import store
         t = store.get_tenant_by_email(self.db_path, email)
-        return len(store.list_deals(self.db_path, tenant_id=t["id"]))
+        return store.list_deals(self.db_path, tenant_id=t["id"])
 
-    def _deal_names_for(self, email):
-        from app import store
-        t = store.get_tenant_by_email(self.db_path, email)
-        return [d["name"] for d in store.list_deals(self.db_path, tenant_id=t["id"])]
+    def _deal_id_for(self, email):
+        return self._deals_for(email)[0]["id"]
 
-    def test_agent_b_cannot_change_a_deal_via_confirm_route(self):
+    def test_agent_b_cannot_read_or_change_a_deal_via_edit_route(self):
         a_client = self._seed_deal_for("a@hardening.com")
         b_client = self._seed_deal_for("b@hardening.com")
-        # A has 1, B has 1
-        self.assertEqual(self._count_for("a@hardening.com"), 1)
-        self.assertEqual(self._count_for("b@hardening.com"), 1)
-        # B tries to re-confirm using A's review data (simulating guessing A's idempotency or deal data)
-        # The confirm route is scoped by B's tenant_id, so even if B sends A's name/commission etc,
-        # the resulting deal must be owned by B, not A nor leak A's data into B's view of A's rows.
+        a_id = self._deal_id_for("a@hardening.com")
+        a_before = self._deals_for("a@hardening.com")[0]
+        # B GET edit with A's id -> 404, no data
+        resp = b_client.get("/deals/edit?id=%d" % a_id)
+        self.assertEqual(resp.code, 404, resp.body[:500])
+        self.assertNotIn("Deal-Alpha", resp.body)
+        # B POST update with A's id -> 404, no change to A's deal
         body = b_client.get("/deals/new").body
-        params = dict(DEAL_A_ROWS)
-        params["name"] = "Deal-Alpha-Intrusion"
-        params["csrf_token"] = csrf_token(body)
-        rev = b_client.post("/deals/review", params)
-        self.assertEqual(rev.code, 200)
-        # B must not see A's actual deal name in its review response derived from A's private data
-        # and A's row must be unchanged
-        h = hidden_inputs(rev.body)
-        h["csrf_token"] = csrf_token(rev.body)
-        b_client.post("/deals/confirm", h)
-        # B's attempt must not have created a row under A
-        self.assertEqual(self._count_for("a@hardening.com"), 1)
-        self.assertIn("Deal-Alpha", self._deal_names_for("a@hardening.com"))
-        self.assertNotIn("Deal-Alpha-Intrusion", self._deal_names_for("a@hardening.com"))
-        # And B's own rows are scoped to B
-        self.assertIn("Deal-Alpha-Intrusion", self._deal_names_for("b@hardening.com"))
-        # B's forecast must not leak A's deal
-        body = b_client.get("/").body
-        self.assertNotIn("Deal-Alpha</a>", body)
-        # Verify via direct DB that B never inserted under A's tenant id
-        from app import store
-        ta = store.get_tenant_by_email(self.db_path, "a@hardening.com")
-        tb = store.get_tenant_by_email(self.db_path, "b@hardening.com")
-        # No deal of B has tenant_id == ta.id
-        import sqlite3
-        conn = sqlite3.connect(self.db_path)
-        rows = conn.execute("SELECT tenant_id, name FROM deals").fetchall()
-        conn.close()
-        for tid, name in rows:
-            if name == "Deal-Alpha-Intrusion":
-                self.assertEqual(tid, tb["id"])
+        resp2 = b_client.request("POST", "/deals/update?id=%d" % a_id, {
+            "name": "Intruded",
+            "commission": "9999,00",
+            "share": "10",
+            "month": "2026-12",
+            "stage": "potencial",
+            "agency": "",
+            "form_locale": "pt-PT",
+            "csrf_token": csrf_token(body),
+        })
+        self.assertEqual(resp2.code, 404, resp2.body[:500])
+        # A's deal unchanged
+        a_after = self._deals_for("a@hardening.com")[0]
+        self.assertEqual(a_before["name"], a_after["name"])
+        self.assertEqual(a_before["month"], a_after["month"])
+        self.assertEqual(a_before["part_base"], a_after["part_base"])
 
-    def test_agent_b_post_to_review_does_not_modify_a(self):
+    def test_agent_b_cannot_change_a_deal_via_confirm_route_sending_a_id(self):
         a_client = self._seed_deal_for("a2@hardening.com")
-        # Capture A's state
-        a_before = self._count_for("a2@hardening.com")
+        a_id = self._deal_id_for("a2@hardening.com")
+        a_before = self._deals_for("a2@hardening.com")[0]
+        # B is a different tenant; confirm route does not take an id param (insert-only)
+        # but we prove B's confirm does not modify A's deal even if B tries to send A's id as hidden field
         b_client = make_client(self.db_path, "b2@hardening.com")
         body = b_client.get("/settings").body
         p = dict(SETTINGS_PT)
         p["csrf_token"] = csrf_token(body)
         b_client.post("/settings", p)
-        # B reviews with A's exact values
+        # B reviews and confirms with an extra id field set to A's id - must not affect A
         body = b_client.get("/deals/new").body
         params = dict(DEAL_A_ROWS)
+        params["name"] = "Intrusion-via-confirm"
         params["csrf_token"] = csrf_token(body)
         rev = b_client.post("/deals/review", params)
-        self.assertEqual(rev.code, 200)
-        # Must not have created a row under A
-        self.assertEqual(self._count_for("a2@hardening.com"), a_before)
+        h = hidden_inputs(rev.body)
+        h["csrf_token"] = csrf_token(rev.body)
+        h["id"] = str(a_id)
+        b_client.post("/deals/confirm", h)
+        # A unchanged
+        a_after = self._deals_for("a2@hardening.com")[0]
+        self.assertEqual(a_before["name"], a_after["name"])
+        self.assertEqual(a_before["part_base"], a_after["part_base"])
+        # A's row count unchanged (1)
+        self.assertEqual(len(self._deals_for("a2@hardening.com")), 1)
+        # B did not leak into A
+        self.assertNotIn("Intrusion", a_after["name"])
 
-    def test_agent_b_move_scenario_cannot_see_a_deals(self):
+    def test_agent_b_cannot_change_a_deal_via_move_scenario_sending_a_id(self):
         a_client = self._seed_deal_for("a3@hardening.com")
         b_client = self._seed_deal_for("b3@hardening.com")
-        # B's move page must not list A's deal names
+        a_id = self._deal_id_for("a3@hardening.com")
+        a_before_month = self._deals_for("a3@hardening.com")[0]["month"]
+        # B's move page must not list A's deal
         body = b_client.get("/scenarios/move").body
-        self.assertNotIn("Deal-Alpha", body)  # A's deal name must not appear
-        # B posting a sentence referencing A's deal must not move A's deal
+        self.assertNotIn("Deal-Alpha", body)
+        # B posts a move referencing A's deal id - must not affect A
+        body = b_client.get("/scenarios/move").body
         csrf = csrf_token(body)
-        resp = b_client.post("/scenarios/move", {"sentence": "move Deal-Alpha to December", "csrf_token": csrf})
+        resp = b_client.post("/scenarios/move", {"sentence": "move Deal-Alpha to December", "csrf_token": csrf, "deal_id": str(a_id)})
         self.assertEqual(resp.code, 200)
-        # A's deal month unchanged
-        from app import store
-        ta = store.get_tenant_by_email(self.db_path, "a3@hardening.com")
-        deals_a = store.list_deals(self.db_path, tenant_id=ta["id"])
-        self.assertEqual(deals_a[0]["month"], "2026-11")
+        # A's month unchanged
+        a_after_month = self._deals_for("a3@hardening.com")[0]["month"]
+        self.assertEqual(a_before_month, a_after_month)
 
     def test_deletion_through_typed_address_page_proves_no_rows_remain(self):
         from app import store
-        import sqlite3, hashlib
+        import sqlite3
         from app import auth
         email = "delhardening@x.com"
         client = make_client(self.db_path, email)
-        # Settings + deal + login link + rate limit state
+        # capture tenant id before deletion
+        tenant_before = store.get_tenant_by_email(self.db_path, email)
+        tenant_id = tenant_before["id"]
+        # Settings + deal
         body = client.get("/settings").body
         p = dict(SETTINGS_PT)
         p["csrf_token"] = csrf_token(body)
@@ -160,36 +149,43 @@ class CrossTenantWebRouteTest(AppTestCase):
         h = hidden_inputs(rev.body)
         h["csrf_token"] = csrf_token(rev.body)
         client.post("/deals/confirm", h)
-        # Create a fresh login link for this tenant (simulates sign-in history)
-        token = "deletion-test-token"
-        auth.request_link(self.db_path, email, "1.2.3.4", now=2000.0, token=token)
+        # Create login link + IP rate limit for this tenant
+        auth.request_link(self.db_path, email, "5.6.7.8", now=2000.0, token="deletion-test-token")
+        # Extra rate limit for another IP for same email to ensure both cleaned
+        auth.request_link(self.db_path, email, "9.9.9.9", now=2001.0, token="deletion-test-token2")
         # Go through typed-address page
         body = client.get("/account/delete").body
         self.assertIn("delete", body.lower())
         resp = client.post("/account/delete", {"email": email, "csrf_token": csrf_token(body)})
         self.assertEqual(resp.code, 200)
         self.assertIn("delete_done", resp.body)
-        # No row of any kind remains for this tenant
+        # Tenant gone
         self.assertIsNone(store.get_tenant_by_email(self.db_path, email))
-        # Deals gone
-        tenant_id_before = store.get_tenant_by_email(self.db_path, "test@example.com")
-        # Use raw DB to prove no deals/settings/sessions/login_links/rate_limits for deleted tenant
         conn = sqlite3.connect(self.db_path)
-        deals = conn.execute("SELECT count(*) FROM deals").fetchall()
-        # At least test@example.com's deals may exist; but no row with deleted tenant's name
-        rows = conn.execute("SELECT name FROM deals").fetchall()
-        names = [r[0] for r in rows]
-        self.assertNotIn("Deal-Alpha", names)
-        # sessions for deleted tenant gone
-        # login_links for that email gone
+        # Zero deals for deleted tenant
+        deals_for_deleted = conn.execute("SELECT count(*) FROM deals WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+        self.assertEqual(deals_for_deleted, 0, "deals for deleted tenant must be 0")
+        # Zero settings for deleted tenant
+        settings_for_deleted = conn.execute("SELECT count(*) FROM settings WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+        self.assertEqual(settings_for_deleted, 0, "settings for deleted tenant must be 0")
+        # Zero sessions for deleted tenant
+        sessions_for_deleted = conn.execute("SELECT count(*) FROM sessions WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+        self.assertEqual(sessions_for_deleted, 0, "sessions for deleted tenant must be 0")
+        # Zero login_links for that email
         links = conn.execute("SELECT count(*) FROM login_links WHERE email=?", (email,)).fetchone()[0]
-        self.assertEqual(links, 0)
-        # rate_limits for that email/ip gone (keys stored as kind+key; email is key for kind=email, ip for kind=ip)
+        self.assertEqual(links, 0, "login_links for deleted tenant must be 0")
+        # Zero rate_limits for email key
         rl_email = conn.execute("SELECT count(*) FROM rate_limits WHERE key=?", (email,)).fetchone()[0]
-        self.assertEqual(rl_email, 0)
-        rl_ip = conn.execute("SELECT count(*) FROM rate_limits WHERE key=?", ("1.2.3.4",)).fetchone()[0]
-        # ip rate limit may be shared; at minimum, after tenant deletion there should be no orphan that prevents recreation
-        # We accept 0 or 1 depending on shared ip, but prove tenant-owned is cleaned
+        self.assertEqual(rl_email, 0, "rate_limits email key for deleted tenant must be 0")
+        # Zero rate_limits for IP keys that belonged to this tenant
+        rl_ip1 = conn.execute("SELECT count(*) FROM rate_limits WHERE key=?", ("5.6.7.8",)).fetchone()[0]
+        self.assertEqual(rl_ip1, 0, "rate_limits IP key 5.6.7.8 for deleted tenant must be 0")
+        rl_ip2 = conn.execute("SELECT count(*) FROM rate_limits WHERE key=?", ("9.9.9.9",)).fetchone()[0]
+        self.assertEqual(rl_ip2, 0, "rate_limits IP key 9.9.9.9 for deleted tenant must be 0")
         conn.close()
-        # Tenant row gone
-        self.assertIsNone(store.get_tenant_by_email(self.db_path, email))
+        # Also via helper API: list_deals for that tenant id returns empty, settings none
+        # (using raw tenant_id since tenant row gone, query with old id)
+        import sqlite3 as _sql
+        c2 = _sql.connect(self.db_path)
+        self.assertEqual(c2.execute("SELECT count(*) FROM deals WHERE tenant_id=?", (tenant_id,)).fetchone()[0], 0)
+        c2.close()
