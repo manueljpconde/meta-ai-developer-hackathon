@@ -35,7 +35,7 @@ class NoDealsMovePageTest(AppTestCase):
         self.assertTrue("no deal" in lowered or "sem neg" in lowered
                         or "ainda n" in lowered, body[:1500])
         self.assertIn("/deals/new", body)
-        self.assertIn("/example", body)
+        self.assertNotIn("/example", body)
 
     def test_post_with_no_deals_asks_without_calling_model(self):
         fake = fake_client(result={
@@ -46,8 +46,8 @@ class NoDealsMovePageTest(AppTestCase):
         self.assertEqual(response.code, 200, response.body[:500])
         self.assertEqual(fake.seen, [])
         lowered = response.body.lower()
-        self.assertTrue("example" in lowered or "exemplo" in lowered
-                        or "deal" in lowered or "neg" in lowered,
+        self.assertTrue("deal" in lowered or "neg" in lowered
+                        or "exemplo" in lowered or "example" in lowered,
                         response.body[:1500])
         self.assertEqual(self.deal_count(), 0)
 

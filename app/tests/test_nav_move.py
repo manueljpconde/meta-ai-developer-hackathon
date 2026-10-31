@@ -9,7 +9,7 @@ current on ``/scenarios/move``. No test calls the network.
 from app import i18n
 from app.tests.helpers import AppTestCase, csrf_token
 
-NAV_PAGES = ("/", "/deals/new", "/settings", "/example", "/scenarios/move")
+NAV_PAGES = ("/", "/deals/new", "/settings", "/scenarios/move")
 
 LABELS = {"pt-PT": "Mover pagamento", "en-GB": "Move payment"}
 
@@ -75,7 +75,7 @@ class NavMoveCurrentTest(AppTestCase):
         )
 
     def test_move_link_not_marked_current_elsewhere(self):
-        for path in ("/", "/deals/new", "/settings", "/example"):
+        for path in ("/", "/deals/new", "/settings"):
             with self.subTest(path=path):
                 body = self.client.get(path).body
                 self.assertNotIn(

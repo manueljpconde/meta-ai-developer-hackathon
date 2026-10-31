@@ -164,107 +164,21 @@ def add_months(year_month, delta):
     return "%04d-%02d" % (index // 12, index % 12 + 1)
 
 
+
+
+
 def example_deal_months():
-    """The two example deal months: next month and the month after."""
+    """Two months after current, kept for tests; Load example route is removed."""
     current = nl_current_month()
     return add_months(current, 1), add_months(current, 2)
 
 
-EXAMPLE_SETTINGS = {
-    "share_rate": "0.5",
-    "iva_rate": "0.23",
-    "retencao_rate": "0.25",
-    "irs_rate": "0.30",
-    "ss_rate": "0.10",
-    "expenses_cents": 35000,
-}
-
-EXAMPLE_DEALS = (
-    {
-        "name": "Exemplo Lisboa",
-        "agency": "",
-        "share_rate": "50",
-        "share_rate_used": "0.5",
-        "agency_commission_cents": 1000000,
-        "part_base": 500000,
-        "stage": "confirmado",
-        "idempotency_key": "example-lisboa",
-    },
-    {
-        "name": "Exemplo Porto",
-        "agency": "",
-        "share_rate": "50",
-        "share_rate_used": "0.5",
-        "agency_commission_cents": 640000,
-        "part_base": 320000,
-        "stage": "confirmado",
-        "idempotency_key": "example-porto",
-    },
-)
-
-
-def apply_example_data(tenant_id=None):
-    """Write the example settings and the two idempotent deals."""
-    # Called from /example POST where session is available; caller passes tenant_id.
-    # Fallback without tenant keeps legacy test helper working but should not happen in web route.
-    if tenant_id is not None:
-        store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS), tenant_id=tenant_id)
-    else:
-        store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS))
-    first, second = example_deal_months()
-    for template, month in zip(EXAMPLE_DEALS, (first, second)):
-        deal = dict(template)
-        deal["month"] = month
-        deal["iva_rate"] = EXAMPLE_SETTINGS["iva_rate"]
-        deal["retencao_rate"] = EXAMPLE_SETTINGS["retencao_rate"]
-        deal["irs_rate"] = EXAMPLE_SETTINGS["irs_rate"]
-        deal["ss_rate"] = EXAMPLE_SETTINGS["ss_rate"]
-        deal["expenses_cents"] = EXAMPLE_SETTINGS["expenses_cents"]
-        if tenant_id is not None:
-            store.insert_deal(DB_PATH, deal, tenant_id=tenant_id)
-        else:
-            store.insert_deal(DB_PATH, deal)
-
-
-def example_action(lang, csrf):
-    """The visible example-loading button posting to the confirm page."""
-    return (
-        '<form method="get" action="/example" class="example">'
-        '<button type="submit" data-i18n="example_action">%s</button>'
-        "</form>"
-        % esc(i18n.text(lang, "example_action"))
-    )
-
-
-def example_confirm_page(lang, csrf):
-    """Confirm page warning that example settings replace settings."""
-    return (
-        '<h1 data-i18n="example_title">%s</h1>'
-        '<p data-i18n="example_confirm">%s</p>'
-        '<form method="post" action="/example">'
-        '<input type="hidden" name="csrf_token" value="%s">'
-        '<button type="submit" data-i18n="example_apply">%s</button>'
-        "</form>"
-        % (
-            esc(i18n.text(lang, "example_title")),
-            esc(i18n.text(lang, "example_confirm")),
-            esc(csrf),
-            esc(i18n.text(lang, "example_apply")),
-        )
-    )
-
-
 def nl_empty_notice(lang):
-    """No-deals notice with links to New deal and the example action."""
     return (
         '<p class="notice" role="alert" data-i18n="nl_empty">%s</p>'
-        '<p><a href="/deals/new" data-i18n="home_new">%s</a> · '
-        '<a href="/example" data-i18n="example_action">%s</a></p>'
-        % (
-            esc(i18n.text(lang, "nl_empty")),
-            esc(i18n.text(lang, "home_new")),
-            esc(i18n.text(lang, "example_action")),
-        )
+        '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
+        % (esc(i18n.text(lang, "nl_empty")),
+           esc(i18n.text(lang, "home_new")))
     )
 
 
@@ -399,8 +313,8 @@ APP_ROUTES = [
     ("/deals/review", "POST"),
     ("/deals/confirm", "POST"),
     ("/deals/edit", "GET"), ("/deals/update", "POST"),
+    ("/deals/delete", "GET"), ("/deals/delete", "POST"),
     ("/scenarios/move", "GET"), ("/scenarios/move", "POST"),
-    ("/example", "GET"), ("/example", "POST"),
     ("/language", "POST"),
 ]
 
@@ -413,23 +327,20 @@ def language_for(environ):
     return i18n.detect_language(environ.get("HTTP_ACCEPT_LANGUAGE", ""))
 
 
-def lang_form(lang, csrf):
-    options = []
-    for code, label in (("pt-PT", "Português"), ("en-GB", "English")):
-        selected = ' selected' if code == lang else ''
-        options.append(
-            '<option value="%s"%s>%s</option>' % (code, selected, label)
-        )
+def lang_switch(lang, csrf):
+    """Compact PT | EN switch: two tiny buttons in one form, usable in a header."""
+    def button(code, label):
+        cls = ' class="active"' if code == lang else ""
+        return '<button type="submit" name="lang" value="%s"%s>%s</button>' % (code, cls, label)
     return (
-        '<form method="post" action="/language" class="lang">'
+        '<form method="post" action="/language" class="lang lang--compact">'
         '<input type="hidden" name="csrf_token" value="%s">'
-        '<label for="lang" data-i18n="lang_label">%s</label>'
-        '<select id="lang" name="lang">%s</select>'
-        '<button type="submit" data-i18n="lang_change">%s</button>'
+        '%s | %s'
         "</form>"
-        % (esc(csrf), esc(i18n.text(lang, "lang_label")),
-           "".join(options), esc(i18n.text(lang, "lang_change")))
+        % (esc(csrf), button("pt-PT", "PT"), button("en-GB", "EN"))
     )
+
+lang_form = lang_switch
 
 
 def nav(lang, current=""):
@@ -444,7 +355,11 @@ def nav(lang, current=""):
     return "<nav>" + " ".join(links) + "</nav>"
 
 
-def page(lang, csrf, title, body, current=""):
+def page(lang, csrf, title, body, current="", signed_in=False):
+    if signed_in:
+        header = "%s%s" % (nav(lang, current), lang_switch(lang, csrf))
+    else:
+        header = lang_switch(lang, csrf)
     return (
         "<!DOCTYPE html>"
         '<html lang="%s"><head><meta charset="utf-8">'
@@ -453,10 +368,9 @@ def page(lang, csrf, title, body, current=""):
         "<title>%s</title>"
         '<link rel="stylesheet" href="/static/style.css">'
         "</head><body>"
-        "<header>%s%s</header><main>%s</main></body></html>"
+        "<header>%s</header><main>%s</main></body></html>"
         % (
-            esc(lang), esc(title), nav(lang, current),
-            lang_form(lang, csrf), body,
+            esc(lang), esc(title), header, body,
         )
     )
 
@@ -466,18 +380,30 @@ def error_span(message):
         return ""
     return '<span class="error">%s</span>' % esc(message)
 
-def signin_form(lang, csrf, email, error):
+def signin_page(lang, csrf, email="", error=""):
     return (
-        '<h1 data-i18n="signin_title">%s</h1>'
+        '<div class="signin">'
+        '<h1 data-i18n="signin_heading">%s</h1>'
+        '<p data-i18n="signin_prompt">%s</p>'
         '<form method="post" action="/signin">'
         '<input type="hidden" name="csrf_token" value="%s">'
         '<div><label for="signin-email" data-i18n="signin_label">%s</label>'
         '<input id="signin-email" name="email" type="email" value="%s">%s</div>'
         '<button type="submit" data-i18n="signin_button">%s</button>'
-        '</form>'
-        % (esc(i18n.text(lang, "signin_title")), esc(csrf),
+        '</form></div>'
+        % (esc(i18n.text(lang, "signin_heading")),
+           esc(i18n.text(lang, "signin_prompt")),
+           esc(csrf),
            esc(i18n.text(lang, "signin_label")), esc(email),
            error_span(error), esc(i18n.text(lang, "signin_button")))
+    )
+
+def check_email_page(lang, email):
+    return (
+        '<h1 data-i18n="check_email_title">%s</h1>'
+        '<p>%s</p>'
+        % (esc(i18n.text(lang, "check_email_title")),
+           esc(i18n.text(lang, "check_email_body").replace("{email}", email)))
     )
 
 def delete_form(lang, csrf, error):
@@ -492,6 +418,21 @@ def delete_form(lang, csrf, error):
         % (esc(i18n.text(lang, "delete_title")), esc(csrf),
            esc(i18n.text(lang, "delete_label")), error_span(error),
            esc(i18n.text(lang, "delete_button")))
+    )
+
+def delete_deal_confirm(lang, csrf, deal_id):
+    return (
+        '<h1 data-i18n="delete_deal_title">%s</h1>'
+        '<p data-i18n="delete_deal_confirm">%s</p>'
+        '<form method="post" action="/deals/delete?id=%d">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<button type="submit" data-i18n="delete_deal_button">%s</button>'
+        '</form>'
+        '<p><a href="/deals/edit?id=%d" data-i18n="delete_deal_cancel">%s</a></p>'
+        % (esc(i18n.text(lang, "delete_deal_title")),
+           esc(i18n.text(lang, "delete_deal_confirm")),
+           deal_id, esc(csrf), esc(i18n.text(lang, "delete_deal_button")),
+           deal_id, esc(i18n.text(lang, "delete_deal_cancel")))
     )
 
 def hidden_value(value):
@@ -670,8 +611,8 @@ def forecast_section(lang, month, deals, expenses_cents):
         expenses_cents,
     )
     items = "".join(
-        "<li>%s · %s · %s</li>"
-        % (esc(deal["name"]),
+        '<li><a href="/deals/edit?id=%d">%s</a> · %s · %s</li>'
+        % (deal["id"], esc(deal["name"]),
            esc(i18n.text(lang, "st_" + deal["stage"])),
            esc(format_amount(deal["part_base"], lang)))
         for deal in deals
@@ -805,6 +746,44 @@ def nl_move_result_page(lang, sentence, outcome):
     return '<p class="notice" role="alert">%s</p>' % esc(
         i18n.text(lang, "nl_no_connection"))
 
+def edit_form_html(lang, csrf, deal_id, values, errors):
+    stages_html = "".join(
+        '<label><input type="radio" name="stage" value="%s"%s>%s</label>'
+        % (code, ' checked' if values.get("stage", "") == code else '', esc(i18n.text(lang, "st_" + code)))
+        for code in STAGES
+    )
+    return (
+        '<h1 data-i18n="deal_edit_title">%s</h1>'
+        '<form method="post" action="/deals/update?id=%d">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<input type="hidden" name="form_locale" value="%s">'
+        '<div><label for="deal-name" data-i18n="f_name">%s</label>'
+        '<input id="deal-name" name="name" value="%s">%s</div>'
+        '<div><label for="deal-commission" data-i18n="f_commission">%s</label>'
+        '<input id="deal-commission" name="commission" value="%s">%s</div>'
+        '<div><label for="deal-share" data-i18n="f_share">%s</label>'
+        '<input id="deal-share" name="share" value="%s">%s</div>'
+        '<div><label for="deal-month" data-i18n="f_month">%s</label>'
+        '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
+        '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
+        '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
+        '<input id="deal-agency" name="agency" value="%s">%s</div>'
+        '<button type="submit" data-i18n="btn_confirm">%s</button>'
+        "</form>"
+        '<p><a href="/deals/delete?id=%d" data-i18n="delete_deal_button">%s</a></p>'
+        % (
+            esc(i18n.text(lang, "deal_edit_title")), deal_id, esc(csrf), esc(lang),
+            esc(i18n.text(lang, "f_name")), esc(values.get("name", "")), error_span(errors.get("name", "")),
+            esc(i18n.text(lang, "f_commission")), esc(values.get("commission", "")), error_span(errors.get("commission", "")),
+            esc(i18n.text(lang, "f_share")), esc(values.get("share", "")), error_span(errors.get("share", "")),
+            esc(i18n.text(lang, "f_month")), esc(values.get("month", "")), error_span(errors.get("month", "")),
+            esc(i18n.text(lang, "f_stage")), stages_html, error_span(errors.get("stage", "")),
+            esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")), error_span(errors.get("agency", "")),
+            esc(i18n.text(lang, "btn_confirm")),
+            deal_id, esc(i18n.text(lang, "delete_deal_button")),
+        )
+    )
+
 
 def nl_records_from_deals(deals):
     """Read stored deals as unpaid expected payment records.
@@ -834,6 +813,22 @@ def _unused_interpret(sentence):
     raise AssertionError("the model must not be called for this sentence")
 
 
+def implausible_flags(lang, parsed):
+    """Return errors/warnings for implausible values; callers decide refusal vs confirmation."""
+    out = {}
+    share_raw = parsed.get("share_rate", "")
+    # share entered as "4" when 40 % likely -> value 0.04
+    try:
+        from decimal import Decimal as _D
+        if share_raw and _D(share_raw) == _D("0.04"):
+            out["share"] = i18n.text(lang, "err_confirm_share")
+    except Exception:
+        pass
+    comm = parsed.get("commission_cents", None)
+    if comm is not None and 0 < comm < 10000:
+        out["commission"] = i18n.text(lang, "err_small_commission")
+    return out
+
 def validate_nl_sentence(sentence):
     """Refuse an empty or overlong move sentence before any model call."""
     if sentence is None or not sentence.strip():
@@ -854,8 +849,11 @@ def validate_deal(lang, fields, form_locale):
     else:
         parsed["name"] = fields.get("name", "").strip()
     commission_text = fields.get("commission", "")
-    if not commission_text.strip():
+    raw_comm = commission_text.strip()
+    if not raw_comm:
         errors["commission"] = i18n.text(lang, "err_commission")
+    elif raw_comm.startswith("-"):
+        errors["commission"] = i18n.text(lang, "err_negative")
     else:
         try:
             commission = parse_amount(commission_text, form_locale)
@@ -909,13 +907,16 @@ def validate_settings(lang, fields, form_locale):
             continue
         parsed[name] = rate_string(percent)
     expenses_text = fields.get("expenses", "")
-    if not expenses_text.strip():
+    raw_exp = expenses_text.strip()
+    if not raw_exp:
         errors["expenses"] = i18n.text(lang, "err_amount")
+    elif raw_exp.startswith("-"):
+        errors["expenses"] = i18n.text(lang, "err_negative")
     else:
         try:
             expenses = parse_amount(expenses_text, form_locale)
             if expenses < 0:
-                errors["expenses"] = i18n.text(lang, "err_amount")
+                errors["expenses"] = i18n.text(lang, "err_negative")
             else:
                 parsed["expenses"] = expenses
         except ValueError:
@@ -975,7 +976,7 @@ def application(environ, start_response):
             '<h1 data-i18n="refused_title">%s</h1>'
             '<p data-i18n="refused_msg">%s</p>'
             % (esc(i18n.text(lang, "refused_title")),
-               esc(i18n.text(lang, "refused_msg"))),
+               esc(i18n.text(lang, "refused_msg"))), signed_in=bool(session.get("authenticated")),
         )
         return respond("403 Forbidden", body)
 
@@ -986,7 +987,7 @@ def application(environ, start_response):
             '<h1 data-i18n="refused_title">%s</h1>'
             '<p data-i18n="refused_msg">%s</p>'
             % (esc(i18n.text(lang, "refused_title")),
-               esc(i18n.text(lang, "refused_msg"))),
+               esc(i18n.text(lang, "refused_msg"))), signed_in=bool(session.get("authenticated")),
         )
         return respond("413 Content Too Large", body)
 
@@ -997,7 +998,7 @@ def application(environ, start_response):
             '<h1 data-i18n="refused_title">%s</h1>'
             '<p data-i18n="refused_msg">%s</p>'
             % (esc(i18n.text(lang, "refused_title")),
-               esc(i18n.text(lang, "refused_msg"))),
+               esc(i18n.text(lang, "refused_msg"))), signed_in=bool(session.get("authenticated")),
         )
         return respond("400 Bad Request", body)
 
@@ -1015,32 +1016,41 @@ def application(environ, start_response):
     # ── Auth routes (before session gate: signin/verify are public) ──
     if path == "/signin" and method == "GET":
         body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
-                    signin_form(lang, session["csrf"], "", ""), "/signin")
+                    signin_page(lang, session["csrf"], "", ""), "/signin")
         return respond("200 OK", body)
     if path == "/signin" and method == "POST":
         fields = read_post_form()
         if not isinstance(fields, dict):
             return fields
         if not csrf_ok(fields):
-            return forbidden()
+            body = page(lang, session["csrf"], i18n.text(lang, "check_email_title"),
+                        '<h1 data-i18n="refused_title">%s</h1><p class="error">%s</p><p><a href="/signin">%s</a></p>'
+                        % (esc(i18n.text(lang, "refused_title")), esc(i18n.text(lang, "err_csrf")),
+                           esc(i18n.text(lang, "signin_title"))))
+            return respond("200 OK", body)
         email = fields.get("email", "").strip()
         if not auth.validate_email(email):
-            body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
-                        signin_form(lang, session["csrf"], email, i18n.text(lang, "err_email")), "/signin")
+            body = page(lang, session["csrf"], i18n.text(lang, "check_email_title"),
+                        '<h1 data-i18n="check_email_title">%s</h1>'
+                        '<p class="error">%s</p>'
+                        '<p><a href="/signin">%s</a></p>'
+                        % (esc(i18n.text(lang, "check_email_title")), esc(i18n.text(lang, "err_email")),
+                           esc(i18n.text(lang, "signin_title"))))
             return respond("200 OK", body)
         ip = environ.get("REMOTE_ADDR", "") or environ.get("HTTP_X_FORWARDED_FOR", "")
         ok, result = auth.request_link(DB_PATH, email, ip, lang=lang)
         if not ok:
-            # result is error key
             msg = i18n.text(lang, result) if result in i18n.STRINGS[lang] else i18n.text(lang, "signin_rate")
-            body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
-                        signin_form(lang, session["csrf"], email, msg), "/signin")
+            body = page(lang, session["csrf"], i18n.text(lang, "check_email_title"),
+                        '<h1 data-i18n="check_email_title">%s</h1><p class="error">%s</p><p><a href="/signin">%s</a></p>'
+                        % (esc(i18n.text(lang, "check_email_title")), esc(msg),
+                           esc(i18n.text(lang, "signin_title"))))
             return respond("200 OK", body)
         token = result
         base_url = os.environ.get("APP_BASE_URL", "http://localhost:8000")
         mail.send_signin_link(email, token, lang, base_url)
-        body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
-                    '<p data-i18n="signin_sent">%s</p>' % esc(i18n.text(lang, "signin_sent")), "/signin")
+        body = page(lang, session["csrf"], i18n.text(lang, "check_email_title"),
+                    check_email_page(lang, esc(email)) + signin_page(lang, session["csrf"], email, ""), "/signin")
         return respond("200 OK", body)
     if path == "/auth/verify" and method == "GET":
         query = read_query(environ)
@@ -1074,7 +1084,7 @@ def application(environ, start_response):
         if not session.get("authenticated"):
             return redirect("/signin")
         body = page(lang, session["csrf"], i18n.text(lang, "delete_title"),
-                    delete_form(lang, session["csrf"], ""), "/account/delete")
+                    delete_form(lang, session["csrf"], ""), "/account/delete", signed_in=True)
         return respond("200 OK", body)
     if path == "/account/delete" and method == "POST":
         fields = read_post_form()
@@ -1088,12 +1098,12 @@ def application(environ, start_response):
         actual = session.get("email", "").strip().lower()
         if typed != actual:
             body = page(lang, session["csrf"], i18n.text(lang, "delete_title"),
-                        delete_form(lang, session["csrf"], i18n.text(lang, "delete_mismatch")), "/account/delete")
+                        delete_form(lang, session["csrf"], i18n.text(lang, "delete_mismatch")), "/account/delete", signed_in=True)
             return respond("200 OK", body)
         store.delete_tenant(DB_PATH, session["tenant_id"])
         clear = "session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax"
         body = page(lang, session["csrf"], i18n.text(lang, "delete_done"),
-                    '<p data-i18n="delete_done">%s</p>' % esc(i18n.text(lang, "delete_done")))
+                    '<p data-i18n="delete_done">%s</p>' % esc(i18n.text(lang, "delete_done")), signed_in=True)
         return respond("200 OK", body, [("Set-Cookie", clear)])
 
     if path == "/static/style.css":
@@ -1126,15 +1136,11 @@ def application(environ, start_response):
                 lang, session["csrf"], i18n.text(lang, "home_title"),
                 '<h1 data-i18n="home_title">%s</h1>'
                 '<p data-i18n="home_empty">%s</p>'
-                '<p><a href="/deals/new" data-i18n="home_new">%s</a> · '
-                '<a href="/example" data-i18n="example_action">%s</a></p>'
-                "%s"
+                '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
                 % (esc(i18n.text(lang, "home_title")),
                    esc(i18n.text(lang, "home_empty")),
-                   esc(i18n.text(lang, "home_new")),
-                   esc(i18n.text(lang, "example_action")),
-                   example_action(lang, session["csrf"])),
-                "/",
+                   esc(i18n.text(lang, "home_new"))),
+                "/", signed_in=True,
             )
             return respond("200 OK", body)
         sections = "".join(
@@ -1145,7 +1151,7 @@ def application(environ, start_response):
         body = page(lang, session["csrf"], i18n.text(lang, "home_title"),
                     '<h1 data-i18n="home_title">%s</h1>%s'
                     % (esc(i18n.text(lang, "home_title")), sections),
-                    "/")
+                    "/", signed_in=True)
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "GET":
@@ -1153,12 +1159,11 @@ def application(environ, start_response):
         notice = nl_empty_notice(lang) if not deals else ""
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
                     '<h1 data-i18n="move_title">%s</h1>'
-                    "%s%s%s"
+                    "%s%s"
                     % (esc(i18n.text(lang, "move_title")),
                        nl_sentence_form(lang, session["csrf"]),
-                       notice,
-                       example_action(lang, session["csrf"])),
-                    "/scenarios/move")
+                       notice),
+                    "/scenarios/move", signed_in=True)
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "POST":
@@ -1207,27 +1212,10 @@ def application(environ, start_response):
         notice = nl_empty_notice(lang) if not deals else ""
         content = (nl_sentence_form(lang, session["csrf"], sentence)
                    + notice
-                   + nl_move_result_page(lang, sentence, outcome)
-                   + example_action(lang, session["csrf"]))
+                   + nl_move_result_page(lang, sentence, outcome))
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
-                    content, "/scenarios/move")
+                    content, "/scenarios/move", signed_in=True)
         return respond("200 OK", body)
-
-    if path == "/example" and method == "GET":
-        body = page(lang, session["csrf"],
-                    i18n.text(lang, "example_title"),
-                    example_confirm_page(lang, session["csrf"]))
-        return respond("200 OK", body)
-
-    if path == "/example" and method == "POST":
-        fields = read_post_form()
-        if not isinstance(fields, dict):
-            return fields
-        if not csrf_ok(fields):
-            return forbidden()
-        apply_example_data(tenant_id=session["tenant_id"])
-        first, _second = example_deal_months()
-        return redirect("/?month=" + first)
 
     if path == "/language" and method == "POST":
         fields = read_post_form()
@@ -1257,7 +1245,7 @@ def application(environ, start_response):
             }
         body = page(lang, session["csrf"], i18n.text(lang, "set_title"),
                     settings_form(lang, session["csrf"], values, {}),
-                    "/settings")
+                    "/settings", signed_in=True)
         return respond("200 OK", body)
 
     if path == "/settings" and method == "POST":
@@ -1276,7 +1264,7 @@ def application(environ, start_response):
             body = page(lang, session["csrf"],
                         i18n.text(lang, "set_title"),
                         settings_form(lang, session["csrf"], values, errors),
-                        "/settings")
+                        "/settings", signed_in=True)
             return respond("200 OK", body)
         store.save_settings(DB_PATH, {
             "share_rate": parsed["share"],
@@ -1292,7 +1280,7 @@ def application(environ, start_response):
         settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
                     deal_form(lang, session["csrf"], {}, {}, settings),
-                    "/deals/new")
+                    "/deals/new", signed_in=True)
         return respond("200 OK", body)
 
     if path == "/deals/review" and method == "POST":
@@ -1308,6 +1296,16 @@ def application(environ, start_response):
         errors, parsed = validate_deal(lang, fields, form_locale)
         if settings is None:
             errors["commission"] = i18n.text(lang, "err_settings")
+        # implausible-input handling: refuse unless explicitly confirmed
+        if not errors:
+            flags = implausible_flags(lang, parsed)
+            if flags:
+                # allow if confirmation field present
+                for k in list(flags):
+                    if fields.get("confirm_"+k) == "1":
+                        del flags[k]
+                if flags:
+                    errors.update(flags)
         if errors:
             values = {name: fields.get(name, "") for name in
                       ("name", "commission", "share", "month", "stage",
@@ -1318,7 +1316,7 @@ def application(environ, start_response):
                 % (esc(i18n.text(lang, "err_settings"))
                    if settings is None else "",
                    deal_form(lang, session["csrf"], values, errors,
-                             settings)))
+                             settings)), signed_in=True)
             return respond("200 OK", body)
         share_cents = agent_share(parsed["commission_cents"],
                                   parsed["share_rate"])
@@ -1336,7 +1334,7 @@ def application(environ, start_response):
         }
         body = page(lang, session["csrf"], i18n.text(lang, "rev_title"),
                     review_page(lang, session["csrf"], shown, share_cents,
-                                result, False, key))
+                                result, False, key), signed_in=True)
         return respond("200 OK", body)
 
     if path == "/deals/confirm" and method == "POST":
@@ -1362,7 +1360,7 @@ def application(environ, start_response):
                        "agency")}
             body = page(
                 lang, session["csrf"], i18n.text(lang, "deal_title"),
-                deal_form(lang, session["csrf"], values, errors, settings))
+                deal_form(lang, session["csrf"], values, errors, settings), signed_in=True)
             return respond("200 OK", body)
         share_cents = agent_share(parsed["commission_cents"],
                                   parsed["share_rate"])
@@ -1396,7 +1394,7 @@ def application(environ, start_response):
             body = page(
                 lang, session["csrf"], i18n.text(lang, "rev_title"),
                 review_page(lang, session["csrf"], shown_fields, share_cents,
-                            result, True, secrets.token_urlsafe(16)))
+                            result, True, secrets.token_urlsafe(16)), signed_in=True)
             return respond("200 OK", body)
         store.insert_deal(DB_PATH, {
             "name": parsed["name"],
@@ -1422,10 +1420,10 @@ def application(environ, start_response):
         try:
             did = int(raw_id)
         except (TypeError, ValueError):
-            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
         deal = store.get_deal(DB_PATH, did, session["tenant_id"])
         if deal is None:
-            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
         settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         values = {
             "name": deal["name"],
@@ -1435,39 +1433,11 @@ def application(environ, start_response):
             "stage": deal["stage"],
             "agency": deal["agency"],
         }
-        # Render edit form posting to /deals/update with id
-        body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
-                    '<h1 data-i18n="deal_title">%s</h1>'
-                    '<form method="post" action="/deals/update?id=%d">'
-                    '<input type="hidden" name="csrf_token" value="%s">'
-                    '<input type="hidden" name="form_locale" value="%s">'
-                    '<div><label for="deal-name" data-i18n="f_name">%s</label>'
-                    '<input id="deal-name" name="name" value="%s">%s</div>'
-                    '<div><label for="deal-commission" data-i18n="f_commission">%s</label>'
-                    '<input id="deal-commission" name="commission" value="%s">%s</div>'
-                    '<div><label for="deal-share" data-i18n="f_share">%s</label>'
-                    '<input id="deal-share" name="share" value="%s">%s</div>'
-                    '<div><label for="deal-month" data-i18n="f_month">%s</label>'
-                    '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
-                    '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
-                    '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
-                    '<input id="deal-agency" name="agency" value="%s">%s</div>'
-                    '<button type="submit" data-i18n="btn_confirm">%s</button>'
-                    "</form>"
-                    % (
-                        esc(i18n.text(lang, "deal_title")), did, esc(session["csrf"]), esc(lang),
-                        esc(i18n.text(lang, "f_name")), esc(values["name"]), "",
-                        esc(i18n.text(lang, "f_commission")), esc(values["commission"]), "",
-                        esc(i18n.text(lang, "f_share")), esc(values["share"]), "",
-                        esc(i18n.text(lang, "f_month")), esc(values["month"]), "",
-                        esc(i18n.text(lang, "f_stage")), "".join(
-                            '<label><input type="radio" name="stage" value="%s"%s>%s</label>'
-                            % (code, ' checked' if values["stage"] == code else '', esc(i18n.text(lang, "st_" + code)))
-                            for code in STAGES
-                        ), "",
-                        esc(i18n.text(lang, "f_agency")), esc(values["agency"]), "",
-                        esc(i18n.text(lang, "btn_confirm")),
-                    ), "/deals/edit")
+        if fields := {}:  # keep linter happy, not used
+            pass
+        body = page(lang, session["csrf"], i18n.text(lang, "deal_edit_title"),
+                    edit_form_html(lang, session["csrf"], did, values, {}),
+                    "/deals/edit", signed_in=True)
         return respond("200 OK", body)
 
     if path == "/deals/update" and method == "POST":
@@ -1476,10 +1446,10 @@ def application(environ, start_response):
         try:
             did = int(raw_id)
         except (TypeError, ValueError):
-            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
         deal = store.get_deal(DB_PATH, did, session["tenant_id"])
         if deal is None:
-            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
         fields = read_post_form()
         if not isinstance(fields, dict):
             return fields
@@ -1493,42 +1463,10 @@ def application(environ, start_response):
         if settings is None:
             errors["commission"] = i18n.text(lang, "err_settings")
         if errors:
-            # re-render edit with errors
             values = {name: fields.get(name, "") for name in ("name", "commission", "share", "month", "stage", "agency")}
-            # build edit page again with errors
-            stages_html = "".join(
-                '<label><input type="radio" name="stage" value="%s"%s>%s</label>'
-                % (code, ' checked' if values.get("stage", "") == code else '', esc(i18n.text(lang, "st_" + code)))
-                for code in STAGES
-            )
-            body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
-                        '<h1 data-i18n="deal_title">%s</h1>'
-                        '<form method="post" action="/deals/update?id=%d">'
-                        '<input type="hidden" name="csrf_token" value="%s">'
-                        '<input type="hidden" name="form_locale" value="%s">'
-                        '<div><label for="deal-name" data-i18n="f_name">%s</label>'
-                        '<input id="deal-name" name="name" value="%s">%s</div>'
-                        '<div><label for="deal-commission" data-i18n="f_commission">%s</label>'
-                        '<input id="deal-commission" name="commission" value="%s">%s</div>'
-                        '<div><label for="deal-share" data-i18n="f_share">%s</label>'
-                        '<input id="deal-share" name="share" value="%s">%s</div>'
-                        '<div><label for="deal-month" data-i18n="f_month">%s</label>'
-                        '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
-                        '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
-                        '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
-                        '<input id="deal-agency" name="agency" value="%s">%s</div>'
-                        '<button type="submit" data-i18n="btn_confirm">%s</button>'
-                        "</form>"
-                        % (
-                            esc(i18n.text(lang, "deal_title")), did, esc(session["csrf"]), esc(lang),
-                            esc(i18n.text(lang, "f_name")), esc(values.get("name", "")), error_span(errors.get("name", "")),
-                            esc(i18n.text(lang, "f_commission")), esc(values.get("commission", "")), error_span(errors.get("commission", "")),
-                            esc(i18n.text(lang, "f_share")), esc(values.get("share", "")), error_span(errors.get("share", "")),
-                            esc(i18n.text(lang, "f_month")), esc(values.get("month", "")), error_span(errors.get("month", "")),
-                            esc(i18n.text(lang, "f_stage")), stages_html, error_span(errors.get("stage", "")),
-                            esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")), error_span(errors.get("agency", "")),
-                            esc(i18n.text(lang, "btn_confirm")),
-                        ), "/deals/edit")
+            body = page(lang, session["csrf"], i18n.text(lang, "deal_edit_title"),
+                        edit_form_html(lang, session["csrf"], did, values, errors),
+                        "/deals/edit", signed_in=True)
             return respond("200 OK", body)
         share_cents = agent_share(parsed["commission_cents"], parsed["share_rate"])
         store.update_deal(DB_PATH, did, session["tenant_id"], {
@@ -1547,6 +1485,38 @@ def application(environ, start_response):
             "expenses_cents": settings["expenses_cents"],
         })
         return redirect("/?month=" + parsed["month"])
+
+    # ── Delete deal with confirmation step (tenant-scoped)
+    if path == "/deals/delete" and method == "GET":
+        query = read_query(environ)
+        raw_id = query.get("id", "")
+        try:
+            did = int(raw_id)
+        except (TypeError, ValueError):
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
+        deal = store.get_deal(DB_PATH, did, session["tenant_id"])
+        if deal is None:
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
+        body = page(lang, session["csrf"], i18n.text(lang, "delete_deal_title"),
+                    delete_deal_confirm(lang, session["csrf"], did), "/deals/delete", signed_in=True)
+        return respond("200 OK", body)
+    if path == "/deals/delete" and method == "POST":
+        query = read_query(environ)
+        raw_id = query.get("id", "")
+        try:
+            did = int(raw_id)
+        except (TypeError, ValueError):
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
+        deal = store.get_deal(DB_PATH, did, session["tenant_id"])
+        if deal is None:
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        store.delete_deal(DB_PATH, did, session["tenant_id"])
+        return redirect("/")
 
     start_response("404 Not Found", [("Content-Length", str(len(b"Not found"))),
                                      ("Content-Security-Policy",

@@ -20,7 +20,7 @@ class NoFixedExampleTest(AppTestCase):
     def test_fresh_move_page_shows_form_and_example_action(self):
         body = self.client.get("/scenarios/move").body
         self.assertIn('name="sentence"', body)
-        self.assertIn("/example", body)
+        self.assertNotIn("/example", body)
 
     def test_move_page_saves_nothing(self):
         before = self.deal_count()
@@ -33,7 +33,7 @@ class NoFixedExampleTest(AppTestCase):
         body = self.client.get("/scenarios/move").body
         self.assertNotIn("T2 Campo de Ourique", body)
         self.assertNotIn("December 2026", body)
-        self.assertIn("/example", body)
+        self.assertNotIn("/example", body)
 
 
 if __name__ == "__main__":
