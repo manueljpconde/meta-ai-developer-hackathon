@@ -15,7 +15,7 @@ from decimal import Decimal
 from urllib.parse import parse_qsl, quote, unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app import i18n, store
+from app import auth, i18n, mail, store
 from engine.calc import agent_share, calc_month
 from engine.model_client import API_KEY_ENV_VAR, MetaMoveClient, ModelError
 from engine.nl_move import plan_nl_move
@@ -342,13 +342,25 @@ def parse_cookies(environ):
 def session_for(environ):
     jar = parse_cookies(environ)
     token = jar.get("session", "")
+    if token:
+        sess = auth.get_valid_session(DB_PATH, token)
+        if sess is not None:
+            return {"id": sess["id"], "csrf": sess["csrf_token"],
+                    "email": sess["email"], "tenant_id": sess["tenant_id"],
+                    "authenticated": True}, []
+    # Unauthenticated: CSRF-only session via ephemeral token
     if token in SESSIONS:
-        return SESSIONS[token], []
+        rec = SESSIONS[token]
+        if rec.get("authenticated"):
+            # Stale authenticated entry, ignore
+            pass
+        else:
+            return rec, []
     token = secrets.token_urlsafe(16)
     csrf = secrets.token_urlsafe(32)
-    record = {"id": token, "csrf": csrf}
+    record = {"id": token, "csrf": csrf, "authenticated": False}
     SESSIONS[token] = record
-    cookie = "session=%s; HttpOnly; Path=/; SameSite=Strict" % token
+    cookie = "session=%s; HttpOnly; Path=/; SameSite=Lax" % token
     return record, [cookie]
 
 
@@ -413,6 +425,33 @@ def error_span(message):
         return ""
     return '<span class="error">%s</span>' % esc(message)
 
+def signin_form(lang, csrf, email, error):
+    return (
+        '<h1 data-i18n="signin_title">%s</h1>'
+        '<form method="post" action="/signin">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<div><label for="signin-email" data-i18n="signin_label">%s</label>'
+        '<input id="signin-email" name="email" type="email" value="%s">%s</div>'
+        '<button type="submit" data-i18n="signin_button">%s</button>'
+        '</form>'
+        % (esc(i18n.text(lang, "signin_title")), esc(csrf),
+           esc(i18n.text(lang, "signin_label")), esc(email),
+           error_span(error), esc(i18n.text(lang, "signin_button")))
+    )
+
+def delete_form(lang, csrf, error):
+    return (
+        '<h1 data-i18n="delete_title">%s</h1>'
+        '<form method="post" action="/account/delete">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<div><label for="delete-email" data-i18n="delete_label">%s</label>'
+        '<input id="delete-email" name="email" type="email" value="">%s</div>'
+        '<button type="submit" data-i18n="delete_button">%s</button>'
+        '</form>'
+        % (esc(i18n.text(lang, "delete_title")), esc(csrf),
+           esc(i18n.text(lang, "delete_label")), error_span(error),
+           esc(i18n.text(lang, "delete_button")))
+    )
 
 def hidden_value(value):
     """Encode a value for a hidden input, keeping the round-trip exact.
@@ -916,6 +955,108 @@ def application(environ, start_response):
 
     def csrf_ok(fields):
         return fields.get("csrf_token", "") == session["csrf"]
+
+    # ── Auth routes (before session gate: signin/verify are public) ──
+    if path == "/signin" and method == "GET":
+        body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                    signin_form(lang, session["csrf"], "", ""), "/signin")
+        return respond("200 OK", body)
+    if path == "/signin" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        email = fields.get("email", "").strip()
+        if not auth.validate_email(email):
+            body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                        signin_form(lang, session["csrf"], email, i18n.text(lang, "err_email")), "/signin")
+            return respond("200 OK", body)
+        ip = environ.get("REMOTE_ADDR", "") or environ.get("HTTP_X_FORWARDED_FOR", "")
+        ok, result = auth.request_link(DB_PATH, email, ip, lang=lang)
+        if not ok:
+            # result is error key
+            msg = i18n.text(lang, result) if result in i18n.STRINGS[lang] else i18n.text(lang, "signin_rate")
+            body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                        signin_form(lang, session["csrf"], email, msg), "/signin")
+            return respond("200 OK", body)
+        token = result
+        base_url = os.environ.get("APP_BASE_URL", "http://localhost:8000")
+        mail.send_signin_link(email, token, lang, base_url)
+        body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                    '<p data-i18n="signin_sent">%s</p>' % esc(i18n.text(lang, "signin_sent")), "/signin")
+        return respond("200 OK", body)
+    if path == "/auth/verify" and method == "GET":
+        query = read_query(environ)
+        token = query.get("token", "")
+        if not token:
+            body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                        '<p class="error" data-i18n="auth_invalid">%s</p>' % esc(i18n.text(lang, "auth_invalid")), "/signin")
+            return respond("200 OK", body)
+        link = auth.verify_link(DB_PATH, token)
+        if link is None:
+            body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                        '<p class="error" data-i18n="auth_invalid">%s</p>' % esc(i18n.text(lang, "auth_invalid")), "/signin")
+            return respond("200 OK", body)
+        sess = auth.create_session_for_link(DB_PATH, link)
+        cookie = "session=%s; HttpOnly; Path=/; SameSite=Lax; Max-Age=%d" % (sess["id"], auth.SESSION_EXPIRY_SECONDS)
+        # Secure flag if HTTPS base
+        body = page(lang, sess["csrf_token"], i18n.text(lang, "home_title"),
+                    '<p data-i18n="auth_success">%s</p>' % esc(i18n.text(lang, "auth_success")), "/")
+        headers = [("Location", "/")]
+        headers.append(("Set-Cookie", cookie))
+        data = body.encode("utf-8")
+        hs = [("Content-Type", "text/html; charset=utf-8"),
+              ("Content-Security-Policy", "default-src 'self'"),
+              ("X-Content-Type-Options", "nosniff"),
+              ("Content-Length", str(len(data)))]
+        for c in new_cookies:
+            hs.append(("Set-Cookie", c))
+        hs.append(("Set-Cookie", cookie))
+        start_response("303 See Other", [("Location", "/")] + [("Set-Cookie", cookie)] + [("Set-Cookie", c) for c in new_cookies])
+        return respond("303 See Other", "", [("Location", "/"), ("Set-Cookie", cookie)])
+    if path == "/signout" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        if session.get("authenticated"):
+            store.delete_session(DB_PATH, session["id"])
+        clear = "session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax"
+        return respond("303 See Other", "", [("Location", "/signin"), ("Set-Cookie", clear)])
+    if path == "/account/delete" and method == "GET":
+        if not session.get("authenticated"):
+            return redirect("/signin")
+        body = page(lang, session["csrf"], i18n.text(lang, "delete_title"),
+                    delete_form(lang, session["csrf"], ""), "/account/delete")
+        return respond("200 OK", body)
+    if path == "/account/delete" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        if not session.get("authenticated"):
+            return redirect("/signin")
+        typed = fields.get("email", "").strip().lower()
+        actual = session.get("email", "").strip().lower()
+        if typed != actual:
+            body = page(lang, session["csrf"], i18n.text(lang, "delete_title"),
+                        delete_form(lang, session["csrf"], i18n.text(lang, "delete_mismatch")), "/account/delete")
+            return respond("200 OK", body)
+        store.delete_tenant(DB_PATH, session["tenant_id"])
+        clear = "session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax"
+        body = page(lang, session["csrf"], i18n.text(lang, "delete_done"),
+                    '<p data-i18n="delete_done">%s</p>' % esc(i18n.text(lang, "delete_done")))
+        return respond("200 OK", body, [("Set-Cookie", clear)])
+
+    # ── Session gate: data pages require authentication ──
+    PROTECTED = ("/", "/settings", "/deals/new", "/deals/review", "/deals/confirm",
+                 "/scenarios/move", "/example")
+    if path in PROTECTED or path.startswith("/deals/"):
+        if not session.get("authenticated"):
+            return redirect("/signin")
 
     if path == "/static/style.css":
         try:

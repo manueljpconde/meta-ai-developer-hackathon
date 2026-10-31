@@ -158,6 +158,24 @@ class AppTestCase(unittest.TestCase):
         self.db_path = tmp.name + "/test.db"
         web.DB_PATH = self.db_path
         self.client = Client()
+        self._authenticate_for_tests()
+
+    def _authenticate_for_tests(self):
+        from app import auth as _auth, store as _store
+        import time as _time
+        email = "test@example.com"
+        _store.get_or_create_tenant(self.db_path, email, now=_time.time())
+        tenant = _store.get_tenant_by_email(self.db_path, email)
+        sid = "test-session-" + tenant["email"]
+        # Use store directly to avoid rate limit noise
+        import secrets as _secrets
+        csrf = _secrets.token_urlsafe(16)
+        _store.create_session(self.db_path, sid, tenant["id"], email, _time.time(), _time.time() + 3600*24*30, csrf)
+        self.client.cookies["session"] = sid
+
+    def _unauthenticate(self):
+        self.client.cookies.pop("session", None)
+
 
     def deal_count(self):
         from app import store
@@ -165,7 +183,10 @@ class AppTestCase(unittest.TestCase):
         return store.count_deals(self.db_path)
 
     def set_language(self, lang):
-        body = self.client.get("/").body
+        # Use /signin (public) to get CSRF when not authenticated
+        body = self.client.get("/signin").body
+        if "csrf_token" not in body:
+            body = self.client.get("/").body
         params = {"lang": lang, "csrf_token": csrf_token(body)}
         response = self.client.post("/language", params)
         self.assertEqual(response.code, 303, response.body[:500])
