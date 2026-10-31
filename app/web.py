@@ -1,21 +1,25 @@
-"""WSGI application for the first Agentimo screens.
+"""WSGI application for the Agentimo accounts product.
 
 Standard library only. Every figure comes from ``engine.calc``; the
 only work here is parsing input text. All HTML output is escaped,
 every POST carries a CSRF token tied to a session cookie, SQL uses
 parameters only, and responses carry the security headers.
+Sessions live in the database with hashed ids; every data page
+needs a live session and every query is scoped by its tenant.
 """
 
+import hashlib
 import html
 import os
 import re
 import secrets
+from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
 from urllib.parse import parse_qsl, quote, unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app import i18n, store
+from app import auth, i18n, mail, store
 from engine.calc import agent_share, calc_month
 from engine.model_client import API_KEY_ENV_VAR, MetaMoveClient, ModelError
 from engine.nl_move import plan_nl_move
@@ -23,11 +27,36 @@ from engine.nl_move import plan_nl_move
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "agentimo.db"))
 
+APP_BASE_URL_ENV = "APP_BASE_URL"
+
+SESSION_COOKIE = "session"
+
+CSRF_COOKIE = "csrf"
+
+_NOW_OVERRIDE = None
+
+
+@contextmanager
+def override_now(moment):
+    """Pin the current time in tests (a ``YYYY-MM-DD HH:MM:SS`` text)."""
+    global _NOW_OVERRIDE
+    previous = _NOW_OVERRIDE
+    _NOW_OVERRIDE = moment
+    try:
+        yield
+    finally:
+        _NOW_OVERRIDE = previous
+
+
+def utcnow_text():
+    """Current UTC time as database text, honouring the test pin."""
+    if _NOW_OVERRIDE is not None:
+        return str(_NOW_OVERRIDE)
+    return auth.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
 STAGES = ("potencial", "provavel", "confirmado")
 
 MAX_TEXT_CHARS = 200
-
-SESSIONS = {}
 
 PT_MONTHS = (
     "janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -136,9 +165,10 @@ NL_SENTENCE_MAX_CHARS = 500
 NL_CURRENT_MONTH_ENV = "APP_NL_CURRENT_MONTH"
 
 
-def nl_client():
+def nl_client(tenant=None):
     """Build the live interpretation client for one request."""
-    records = nl_records_from_deals(store.list_deals(DB_PATH))
+    records = nl_records_from_deals(
+        store.list_deals(DB_PATH, tenant=tenant))
     from engine.model_client import build_interpret_context
 
     return MetaMoveClient(context=build_interpret_context(
@@ -203,9 +233,9 @@ EXAMPLE_DEALS = (
 )
 
 
-def apply_example_data():
+def apply_example_data(tenant):
     """Write the example settings and the two idempotent deals."""
-    store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS))
+    store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS), tenant=tenant)
     first, second = example_deal_months()
     for template, month in zip(EXAMPLE_DEALS, (first, second)):
         deal = dict(template)
@@ -215,7 +245,7 @@ def apply_example_data():
         deal["irs_rate"] = EXAMPLE_SETTINGS["irs_rate"]
         deal["ss_rate"] = EXAMPLE_SETTINGS["ss_rate"]
         deal["expenses_cents"] = EXAMPLE_SETTINGS["expenses_cents"]
-        store.insert_deal(DB_PATH, deal)
+        store.insert_deal(DB_PATH, deal, tenant=tenant)
 
 
 def example_action(lang, csrf):
@@ -309,7 +339,12 @@ def read_form(environ):
         length = 0
     if length > MAX_BODY_BYTES:
         raise BodyTooLarge()
-    raw = environ.get("wsgi.input").read(length) if length > 0 else b""
+    stream = environ.get("wsgi.input")
+    raw = stream.read(length) if length > 0 else b""
+    if length == MAX_BODY_BYTES and len(raw) == length:
+        extra = stream.read(1)
+        if extra:
+            raise BodyTooLarge()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -340,16 +375,55 @@ def parse_cookies(environ):
 
 
 def session_for(environ):
+    """Resolve the request's session: live DB row or a fresh guest.
+
+    A valid session cookie maps to its tenant through the hashed
+    session row; anything else gets a fresh CSRF-only guest used
+    for the sign-in pages. Returns ``(session, cookies, tenant)``.
+    """
     jar = parse_cookies(environ)
-    token = jar.get("session", "")
-    if token in SESSIONS:
-        return SESSIONS[token], []
-    token = secrets.token_urlsafe(16)
+    raw = jar.get(SESSION_COOKIE, "")
+    csrf = jar.get(CSRF_COOKIE, "")
+    if raw:
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        tenant = store.find_session(DB_PATH, digest, now=utcnow_text())
+        if tenant is not None:
+            if not csrf:
+                csrf = secrets.token_urlsafe(32)
+                cookie = "%s=%s; HttpOnly; Path=/; SameSite=Lax" % (
+                    CSRF_COOKIE, csrf)
+                return ({"id": raw, "csrf": csrf, "tenant": tenant},
+                        [cookie], tenant)
+            return ({"id": raw, "csrf": csrf, "tenant": tenant}, [], tenant)
+    if not csrf:
+        csrf = secrets.token_urlsafe(32)
+    cookie = "%s=%s; HttpOnly; Path=/; SameSite=Lax" % (CSRF_COOKIE, csrf)
+    return {"id": "", "csrf": csrf, "tenant": None}, [cookie], None
+
+
+def start_session(tenant):
+    """Create a session row and its secure HTTP-only Lax cookie."""
+    raw = auth.generate_token()
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    store.create_session(DB_PATH, digest, tenant, created_at=utcnow_text())
     csrf = secrets.token_urlsafe(32)
-    record = {"id": token, "csrf": csrf}
-    SESSIONS[token] = record
-    cookie = "session=%s; HttpOnly; Path=/; SameSite=Strict" % token
-    return record, [cookie]
+    jar = "%s=%s; HttpOnly; Secure; Path=/; SameSite=Lax" % (
+        SESSION_COOKIE, raw)
+    shield = "%s=%s; HttpOnly; Path=/; SameSite=Lax" % (CSRF_COOKIE, csrf)
+    return {"id": raw, "csrf": csrf, "tenant": tenant}, [jar, shield]
+
+
+def end_session(raw):
+    """Delete one session row: sign-out ends only that device."""
+    if raw:
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        store.delete_session(DB_PATH, digest)
+
+
+def clear_session_cookie():
+    """Expire the session cookie after sign-out or deletion."""
+    return ("%s=; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=0"
+            % SESSION_COOKIE)
 
 
 def language_for(environ):
@@ -376,6 +450,124 @@ def lang_form(lang, csrf):
         "</form>"
         % (esc(csrf), esc(i18n.text(lang, "lang_label")),
            "".join(options), esc(i18n.text(lang, "lang_change")))
+    )
+
+
+def base_url(environ):
+    """Public base URL for links sent by mail, from the environment."""
+    configured = os.environ.get(APP_BASE_URL_ENV, "").strip().rstrip("/")
+    if configured:
+        return configured
+    scheme = environ.get("wsgi.url_scheme", "http")
+    host = environ.get("HTTP_HOST", "") or environ.get(
+        "SERVER_NAME", "localhost")
+    return "%s://%s" % (scheme, host)
+
+
+def signin_page(lang, csrf, message="", error=""):
+    """The email-link request page with its uniform status message."""
+    notice = ""
+    if message:
+        notice = '<p class="notice" role="status">%s</p>' % esc(message)
+    if error:
+        notice = '<p class="notice" role="alert">%s</p>' % esc(error)
+    return (
+        '<h1 data-i18n="signin_title">%s</h1>'
+        "%s"
+        '<form method="post" action="/signin">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<div><label for="signin-email" data-i18n="signin_email">%s</label>'
+        '<input id="signin-email" name="email" type="email"'
+        ' autocomplete="email"></div>'
+        '<button type="submit" data-i18n="signin_send">%s</button>'
+        "</form>"
+        % (
+            esc(i18n.text(lang, "signin_title")),
+            notice,
+            esc(csrf),
+            esc(i18n.text(lang, "signin_email")),
+            esc(i18n.text(lang, "signin_send")),
+        )
+    )
+
+
+def consume_page(lang, csrf, token, error=""):
+    """Opening a link shows a Sign in button; only it uses the token."""
+    notice = ""
+    if error:
+        notice = '<p class="notice" role="alert">%s</p>' % esc(error)
+    return (
+        '<h1 data-i18n="consume_title">%s</h1>'
+        "%s"
+        '<form method="post" action="/auth/consume">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<input type="hidden" name="token" value="%s">'
+        '<button type="submit" data-i18n="consume_button">%s</button>'
+        "</form>"
+        % (
+            esc(i18n.text(lang, "consume_title")),
+            notice,
+            esc(csrf),
+            esc(token),
+            esc(i18n.text(lang, "consume_button")),
+        )
+    )
+
+
+def signout_page(lang, csrf):
+    """Sign-out confirmation posting from the signed-in device."""
+    return (
+        '<h1 data-i18n="signout_title">%s</h1>'
+        '<form method="post" action="/signout">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<button type="submit" data-i18n="signout_button">%s</button>'
+        "</form>"
+        % (
+            esc(i18n.text(lang, "signout_title")),
+            esc(csrf),
+            esc(i18n.text(lang, "signout_button")),
+        )
+    )
+
+
+def delete_page(lang, csrf, error=""):
+    """Typed-email confirmation before the irreversible deletion."""
+    notice = ""
+    if error:
+        notice = '<p class="notice" role="alert">%s</p>' % esc(error)
+    return (
+        '<h1 data-i18n="delete_title">%s</h1>'
+        '<p data-i18n="delete_warning">%s</p>'
+        "%s"
+        '<form method="post" action="/account/delete">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<div><label for="delete-email" data-i18n="delete_email">%s</label>'
+        '<input id="delete-email" name="email" type="email"'
+        ' autocomplete="email"></div>'
+        '<button type="submit" data-i18n="delete_button">%s</button>'
+        "</form>"
+        % (
+            esc(i18n.text(lang, "delete_title")),
+            esc(i18n.text(lang, "delete_warning")),
+            notice,
+            esc(csrf),
+            esc(i18n.text(lang, "delete_email")),
+            esc(i18n.text(lang, "delete_button")),
+        )
+    )
+
+
+def deleted_page(lang):
+    """Landing page after removal: complete, with no recovery."""
+    return (
+        '<h1 data-i18n="deleted_title">%s</h1>'
+        '<p data-i18n="deleted_msg">%s</p>'
+        '<p><a href="/signin" data-i18n="deleted_signin">%s</a></p>'
+        % (
+            esc(i18n.text(lang, "deleted_title")),
+            esc(i18n.text(lang, "deleted_msg")),
+            esc(i18n.text(lang, "deleted_signin")),
+        )
     )
 
 
@@ -726,6 +918,28 @@ def nl_move_result_page(lang, sentence, outcome):
         i18n.text(lang, "nl_no_connection"))
 
 
+def request_signin_link(email, lang, ip, environ):
+    """Create a pending link row and queue the mail, honouring caps.
+
+    Returns ``(ok, message_key)``: ``ok`` is False when the address
+    is invalid or a rate cap refused the request, in which case
+    nothing is stored and nothing is sent.
+    """
+    normalized = auth.normalize_email(email)
+    if not auth.valid_email(normalized):
+        return False, "signin_bad_email"
+    email_count = store.count_recent_links(DB_PATH, email=normalized)
+    ip_count = store.count_recent_links(DB_PATH, ip=ip)
+    if not auth.email_allowed(email_count) or not auth.ip_allowed(ip_count):
+        return False, "signin_rate_limited"
+    raw = auth.generate_token()
+    store.create_link(DB_PATH, normalized, auth.hash_token(raw), lang, ip,
+                      created_at=utcnow_text())
+    link = base_url(environ) + "/auth/consume?token=" + raw
+    mail.send_signin_link(normalized, link, lang)
+    return True, "signin_sent"
+
+
 def nl_records_from_deals(deals):
     """Read stored deals as unpaid expected payment records.
 
@@ -847,7 +1061,8 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 
 def application(environ, start_response):
-    session, new_cookies = session_for(environ)
+    store.migrate(DB_PATH)
+    session, new_cookies, tenant = session_for(environ)
     lang = language_for(environ)
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/") or "/"
@@ -917,6 +1132,164 @@ def application(environ, start_response):
     def csrf_ok(fields):
         return fields.get("csrf_token", "") == session["csrf"]
 
+    def needs_signin():
+        return redirect("/signin")
+
+    if path == "/signin" and method == "GET":
+        if tenant is not None:
+            return redirect("/")
+        body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                    signin_page(lang, session["csrf"]), "/signin")
+        return respond("200 OK", body)
+
+    if path == "/signin" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        if tenant is not None:
+            return redirect("/")
+        ok, key = request_signin_link(
+            fields.get("email", ""), lang, auth.client_ip(environ), environ)
+        if not ok and key == "signin_rate_limited":
+            body = page(
+                lang, session["csrf"], i18n.text(lang, "signin_title"),
+                signin_page(lang, session["csrf"],
+                            error=i18n.text(lang, key)), "/signin")
+            return respond("429 Too Many Requests", body)
+        if not ok:
+            body = page(
+                lang, session["csrf"], i18n.text(lang, "signin_title"),
+                signin_page(lang, session["csrf"],
+                            error=i18n.text(lang, key)), "/signin")
+            return respond("200 OK", body)
+        body = page(
+            lang, session["csrf"], i18n.text(lang, "signin_title"),
+            signin_page(lang, session["csrf"],
+                        message=i18n.text(lang, key)), "/signin")
+        return respond("200 OK", body)
+
+    if path == "/auth/consume" and method == "GET":
+        query = read_query(environ)
+        token = query.get("token", "")
+        body = page(lang, session["csrf"],
+                    i18n.text(lang, "consume_title"),
+                    consume_page(lang, session["csrf"], token), "/signin")
+        return respond("200 OK", body)
+
+    if path == "/auth/consume" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        token = fields.get("token", "")
+        if not token:
+            body = page(
+                lang, session["csrf"], i18n.text(lang, "consume_title"),
+                consume_page(lang, session["csrf"], "",
+                             error=i18n.text(lang, "consume_invalid")),
+                "/signin")
+            return respond("200 OK", body)
+        found = store.consume_link(
+            DB_PATH, auth.hash_token(token), now=utcnow_text())
+        if found is None:
+            body = page(
+                lang, session["csrf"], i18n.text(lang, "consume_title"),
+                consume_page(lang, session["csrf"], "",
+                             error=i18n.text(lang, "consume_invalid")),
+                "/signin")
+            return respond("200 OK", body)
+        ident = store.ensure_tenant(DB_PATH, found["email"])
+        fresh, cookies = start_session(ident)
+        return redirect("/", cookies)
+
+    if path == "/signout" and method == "GET":
+        if tenant is None:
+            return needs_signin()
+        body = page(lang, session["csrf"], i18n.text(lang, "signout_title"),
+                    signout_page(lang, session["csrf"]), "/signout")
+        return respond("200 OK", body)
+
+    if path == "/signout" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if tenant is None:
+            return needs_signin()
+        if not csrf_ok(fields):
+            return forbidden()
+        end_session(session["id"])
+        return redirect("/signin", [clear_session_cookie()])
+
+    if path == "/account/delete" and method == "GET":
+        if tenant is None:
+            return needs_signin()
+        body = page(lang, session["csrf"], i18n.text(lang, "delete_title"),
+                    delete_page(lang, session["csrf"]), "/account/delete")
+        return respond("200 OK", body)
+
+    if path == "/account/delete" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if tenant is None:
+            return needs_signin()
+        if not csrf_ok(fields):
+            return forbidden()
+        typed = auth.normalize_email(fields.get("email", ""))
+        actual = store.tenant_email(DB_PATH, tenant) or ""
+        if not typed or typed != auth.normalize_email(actual):
+            body = page(
+                lang, session["csrf"], i18n.text(lang, "delete_title"),
+                delete_page(lang, session["csrf"],
+                            error=i18n.text(lang, "delete_mismatch")),
+                "/account/delete")
+            return respond("200 OK", body)
+        end_session(session["id"])
+        store.delete_tenant(DB_PATH, tenant)
+        body = page(lang, session["csrf"], i18n.text(lang, "deleted_title"),
+                    deleted_page(lang), "/signin")
+        data = body.encode("utf-8")
+        headers = [
+            ("Content-Type", "text/html; charset=utf-8"),
+            ("Content-Security-Policy", "default-src 'self'"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("Content-Length", str(len(data))),
+            ("Set-Cookie", clear_session_cookie()),
+        ]
+        for cookie in new_cookies:
+            headers.append(("Set-Cookie", cookie))
+        start_response("200 OK", headers)
+        return [data]
+
+    if path in ("/", "/settings", "/deals/new", "/deals/review",
+                "/deals/confirm", "/scenarios/move", "/example",
+                "/language") and tenant is None:
+        if path == "/language" and method != "POST":
+            return needs_signin()
+        if method == "GET" or (path == "/language" and method == "POST"):
+            if path == "/language" and method == "POST":
+                fields = read_post_form()
+                if not isinstance(fields, dict):
+                    return fields
+                if not csrf_ok(fields):
+                    return forbidden()
+                chosen = fields.get("lang", "")
+                if chosen not in i18n.SUPPORTED:
+                    chosen = "pt-PT"
+                cookie = "lang=%s; Path=/; SameSite=Strict" % chosen
+                return redirect("/", [cookie])
+            return needs_signin()
+        # POST to a data page without a session: enforce the body
+        # limits first (413 before anything is read, 400 for
+        # non-UTF-8), then send the visitor to sign in.
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        return needs_signin()
+
     if path == "/static/style.css":
         try:
             with open(os.path.join(STATIC_DIR, "style.css"), "rb") as handle:
@@ -936,12 +1309,12 @@ def application(environ, start_response):
     if path == "/" and method == "GET":
         query = read_query(environ)
         only = query.get("month", "")
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant=tenant)
         expenses = settings["expenses_cents"] if settings else 0
         if only and valid_month(only):
             months = [only]
         else:
-            months = store.months_with_deals(DB_PATH)
+            months = store.months_with_deals(DB_PATH, tenant=tenant)
         if not months:
             body = page(
                 lang, session["csrf"], i18n.text(lang, "home_title"),
@@ -959,7 +1332,8 @@ def application(environ, start_response):
             )
             return respond("200 OK", body)
         sections = "".join(
-            forecast_section(lang, month, store.list_deals(DB_PATH, month),
+            forecast_section(lang, month, store.list_deals(
+                DB_PATH, month, tenant=tenant),
                              expenses)
             for month in months
         )
@@ -970,7 +1344,7 @@ def application(environ, start_response):
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "GET":
-        deals = store.list_deals(DB_PATH)
+        deals = store.list_deals(DB_PATH, tenant=tenant)
         notice = nl_empty_notice(lang) if not deals else ""
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
                     '<h1 data-i18n="move_title">%s</h1>'
@@ -990,7 +1364,7 @@ def application(environ, start_response):
             return forbidden()
         sentence = fields.get("sentence", "")
         problem = validate_nl_sentence(sentence)
-        deals = store.list_deals(DB_PATH)
+        deals = store.list_deals(DB_PATH, tenant=tenant)
         request_lang = "pt" if lang == "pt-PT" else "en"
         if problem == "empty":
             outcome = plan_nl_move(
@@ -1007,11 +1381,11 @@ def application(environ, start_response):
                 "question": i18n.text(lang, "nl_empty"),
             }
         else:
-            settings = store.get_settings(DB_PATH)
+            settings = store.get_settings(DB_PATH, tenant=tenant)
             expenses = settings["expenses_cents"] if settings else 0
             records = nl_records_from_deals(deals)
             try:
-                client = nl_client()
+                client = nl_client(tenant)
             except ModelError as exc:
                 outcome = {"status": "error", "message": str(exc)}
             else:
@@ -1046,7 +1420,7 @@ def application(environ, start_response):
             return fields
         if not csrf_ok(fields):
             return forbidden()
-        apply_example_data()
+        apply_example_data(tenant)
         first, _second = example_deal_months()
         return redirect("/?month=" + first)
 
@@ -1063,7 +1437,7 @@ def application(environ, start_response):
         return redirect("/", [cookie])
 
     if path == "/settings" and method == "GET":
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant=tenant)
         values = {}
         if settings is not None:
             values = {
@@ -1106,11 +1480,11 @@ def application(environ, start_response):
             "irs_rate": parsed["irs"],
             "ss_rate": parsed["ss"],
             "expenses_cents": parsed["expenses"],
-        })
+        }, tenant=tenant)
         return redirect("/settings")
 
     if path == "/deals/new" and method == "GET":
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant=tenant)
         body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
                     deal_form(lang, session["csrf"], {}, {}, settings),
                     "/deals/new")
@@ -1125,7 +1499,7 @@ def application(environ, start_response):
         form_locale = fields.get("form_locale", lang)
         if form_locale not in i18n.SUPPORTED:
             form_locale = lang
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant=tenant)
         errors, parsed = validate_deal(lang, fields, form_locale)
         if settings is None:
             errors["commission"] = i18n.text(lang, "err_settings")
@@ -1173,7 +1547,7 @@ def application(environ, start_response):
         form_locale = fields.get("form_locale", lang)
         if form_locale not in i18n.SUPPORTED:
             form_locale = lang
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant=tenant)
         errors, parsed = validate_deal(lang, fields, form_locale)
         if settings is None:
             errors["commission"] = i18n.text(lang, "err_settings")
@@ -1234,8 +1608,29 @@ def application(environ, start_response):
             "ss_rate": settings["ss_rate"],
             "expenses_cents": settings["expenses_cents"],
             "idempotency_key": fields.get("idempotency_key", ""),
-        })
+        }, tenant=tenant)
         return redirect("/?month=" + parsed["month"])
+
+    if path.startswith("/deals/") and method == "GET":
+        ident = path[len("/deals/"):]
+        try:
+            wanted = int(ident)
+        except ValueError:
+            wanted = -1
+        deal = store.get_deal(DB_PATH, wanted, tenant=tenant)
+        if deal is None:
+            start_response("404 Not Found", [
+                ("Content-Length", str(len(b"Not found"))),
+                ("Content-Security-Policy", "default-src 'self'"),
+                ("X-Content-Type-Options", "nosniff")])
+            return [b"Not found"]
+        body = page(lang, session["csrf"], esc(deal["name"]),
+                    "<h1>%s</h1><p>%s · %s</p>"
+                    % (esc(deal["name"]),
+                       esc(format_month(deal["month"], lang)),
+                       esc(i18n.text(lang, "st_" + deal["stage"]))),
+                    "/")
+        return respond("200 OK", body)
 
     start_response("404 Not Found", [("Content-Length", str(len(b"Not found"))),
                                      ("Content-Security-Policy",

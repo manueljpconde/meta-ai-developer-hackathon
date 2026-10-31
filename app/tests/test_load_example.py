@@ -60,9 +60,9 @@ class ExampleConfirmTest(AppTestCase):
     def test_confirm_creates_settings_and_two_deals(self):
         response = load_example(self)
         self.assertEqual(response.code, 303, response.body[:500])
-        settings = store.get_settings(self.db_path)
+        settings = self.stored_settings()
         self.assertEqual(settings["expenses_cents"], 35000)
-        deals = sorted(store.list_deals(self.db_path),
+        deals = sorted(self.stored_deals(),
                        key=lambda deal: deal["month"])
         self.assertEqual(len(deals), 2)
         self.assertEqual(deals[0]["name"], "Exemplo Lisboa")
@@ -86,7 +86,7 @@ class ExampleConfirmTest(AppTestCase):
         seed_settings(self)
         response = load_example(self)
         self.assertEqual(response.code, 303, response.body[:500])
-        settings = store.get_settings(self.db_path)
+        settings = self.stored_settings()
         self.assertEqual(settings["expenses_cents"], 35000)
         self.assertEqual(self.deal_count(), 2)
 

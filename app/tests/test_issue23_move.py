@@ -217,7 +217,7 @@ class SeptemberDoublePageTest(AppTestCase):
         self.assertNotIn("unknown payment", response.body)
         notices = re.findall(r'role="alert"', response.body)
         self.assertEqual(len(notices), 1, response.body[:2000])
-        kept = store.list_deals(self.db_path)
+        kept = self.stored_deals()
         self.assertEqual(len(kept), 2)
         self.assertEqual(kept[0]["month"], "2026-09")
 

@@ -116,7 +116,7 @@ class PrefilledSettingsRoundTripTest(AppTestCase):
         if lang != "pt-PT":
             self.set_language(lang)
         self.save_settings(settings)
-        before = store.get_settings(self.db_path)
+        before = self.stored_settings()
         body = self.client.get("/settings").body
         hidden = hidden_inputs(body)
         params = {
@@ -128,7 +128,7 @@ class PrefilledSettingsRoundTripTest(AppTestCase):
         params["csrf_token"] = hidden["csrf_token"]
         response = self.client.post("/settings", params)
         self.assertEqual(response.code, 303, response.body[:500])
-        self.assertEqual(store.get_settings(self.db_path), before)
+        self.assertEqual(self.stored_settings(), before)
 
     def test_settings_round_trip_pt(self):
         from app.tests.helpers import SETTINGS_PT

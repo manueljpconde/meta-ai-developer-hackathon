@@ -1,8 +1,10 @@
-"""Shared harness for the section 3 acceptance tests.
+"""Shared harness for the acceptance tests.
 
 Drives the WSGI application directly, with one temporary database per
 test. The database path is injected through ``web.DB_PATH`` so no
-server process is needed.
+server process is needed. Every case signs in through the real
+email-link flow (with the stub outbox, so no test touches the
+network) unless it opts out with ``SIGNED_IN = False``.
 """
 
 import io
@@ -11,7 +13,7 @@ import tempfile
 import unittest
 import urllib.parse
 
-from app import web
+from app import mail, store, web
 
 
 SETTINGS_PT = {
@@ -131,8 +133,9 @@ class Client:
     def get(self, path, accept_language=None):
         return self.request("GET", path, accept_language=accept_language)
 
-    def post(self, path, params):
-        return self.request("POST", path, params=params)
+    def post(self, path, params, accept_language=None):
+        return self.request("POST", path, params=params,
+                            accept_language=accept_language)
 
 
 def hidden_inputs(body):
@@ -152,20 +155,70 @@ def csrf_token(body):
 
 
 class AppTestCase(unittest.TestCase):
+    SIGNED_IN = True
+
+    SIGNIN_EMAIL = "ana@example.pt"
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.db_path = tmp.name + "/test.db"
         web.DB_PATH = self.db_path
         self.client = Client()
+        self.signed_in_email = None
+        if self.SIGNED_IN:
+            self.signin(self.SIGNIN_EMAIL)
+
+    def signin(self, email=None):
+        """Sign in through the real link flow, mail stubbed."""
+        if self.client.cookies.get("session"):
+            return None
+        address = email or self.SIGNIN_EMAIL
+        with mail.stub_outbox():
+            body = self.client.get("/signin").body
+            params = {"email": address, "csrf_token": csrf_token(body)}
+            response = self.client.post("/signin", params)
+            self.assertEqual(response.code, 200, response.body[:500])
+            self.assertEqual(len(mail.outbox), 1, response.body[:500])
+            match = re.search(r"token=([A-Za-z0-9_\-]+)",
+                              mail.outbox[0]["body"])
+            self.assertIsNotNone(match, mail.outbox[0]["body"])
+            token = match.group(1)
+        page = self.client.get("/auth/consume?token=" + token).body
+        params = hidden_inputs(page)
+        params["csrf_token"] = csrf_token(page)
+        signed = self.client.post("/auth/consume", params)
+        self.assertEqual(signed.code, 303, signed.body[:500])
+        self.signed_in_email = address
+        return signed
 
     def deal_count(self):
-        from app import store
+        email = self.signed_in_email or self.SIGNIN_EMAIL
+        tenant = store.tenant_by_email(self.db_path, email)
+        if tenant is None:
+            return 0
+        return store.count_deals(self.db_path, tenant=tenant)
 
-        return store.count_deals(self.db_path)
+    @property
+    def tenant(self):
+        """Signed-in tenant id for tenant-scoped store calls."""
+        email = self.signed_in_email or self.SIGNIN_EMAIL
+        ident = store.tenant_by_email(self.db_path, email)
+        assert ident is not None, "no tenant for %r" % email
+        return ident
+
+    def stored_deals(self, month=None):
+        """Deals of the signed-in tenant, optionally for one month."""
+        return store.list_deals(self.db_path, month, tenant=self.tenant)
+
+    def stored_settings(self):
+        """Settings of the signed-in tenant."""
+        return store.get_settings(self.db_path, tenant=self.tenant)
 
     def set_language(self, lang):
         body = self.client.get("/").body
+        if "csrf_token" not in body:
+            body = self.client.get("/signin").body
         params = {"lang": lang, "csrf_token": csrf_token(body)}
         response = self.client.post("/language", params)
         self.assertEqual(response.code, 303, response.body[:500])

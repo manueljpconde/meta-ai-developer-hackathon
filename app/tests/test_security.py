@@ -54,10 +54,26 @@ class SecurityTest(AppTestCase):
             )
 
     def test_session_cookie_flags(self):
-        self.client.get("/")
-        flags = " ".join(self.client.last_set_cookies).lower()
+        from app import mail
+        from app.tests.helpers import Client, csrf_token, hidden_inputs
+
+        fresh = Client()
+        with mail.stub_outbox():
+            body = fresh.get("/signin").body
+            params = {"email": "flags@example.pt",
+                      "csrf_token": csrf_token(body)}
+            posted = fresh.post("/signin", params)
+            self.assertEqual(posted.code, 200, posted.body[:500])
+            self.assertEqual(len(mail.outbox), 1, posted.body[:500])
+            token = mail.outbox[0]["body"].split("token=")[1].split()[0]
+        page = fresh.get("/auth/consume?token=" + token).body
+        params = hidden_inputs(page)
+        params["csrf_token"] = csrf_token(page)
+        signed = fresh.post("/auth/consume", params)
+        self.assertEqual(signed.code, 303, signed.body[:500])
+        flags = " ".join(fresh.last_set_cookies).lower()
         self.assertIn("httponly", flags)
-        self.assertIn("samesite=strict", flags)
+        self.assertIn("samesite=lax", flags)
 
     def test_settings_post_without_csrf_refused(self):
         body = self.client.get("/settings").body

@@ -101,7 +101,7 @@ class ExactStorageTest(AppTestCase):
         review = self.review_entity()
         response = self.confirm(review.body)
         self.assertEqual(response.code, 303, response.body[:300])
-        stored = store.list_deals(self.db_path)
+        stored = self.stored_deals()
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0]["name"], ENTITY)
 

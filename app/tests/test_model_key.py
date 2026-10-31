@@ -37,7 +37,7 @@ class MissingKeyPageTest(AppTestCase):
         self.assertEqual(response.code, 200, response.body[:500])
         self.assertIn("META_API_KEY", response.body)
         self.assertEqual(self.deal_count(), before)
-        stored = store.list_deals(self.db_path)
+        stored = self.stored_deals()
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0]["month"], "2026-11")
 
@@ -57,7 +57,7 @@ class RefusedKeyPageTest(AppTestCase):
         self.assertIn("META_API_KEY", response.body)
         self.assertNotIn("janeiro de 2027", response.body)
         self.assertEqual(self.deal_count(), before)
-        stored = store.list_deals(self.db_path)
+        stored = self.stored_deals()
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0]["month"], "2026-11")
 

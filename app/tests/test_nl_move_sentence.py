@@ -90,7 +90,7 @@ class ClearMovePageTest(AppTestCase):
         self.assertEqual(self.deal_count(), before)
         from app import store
 
-        stored = store.list_deals(self.db_path)
+        stored = self.stored_deals()
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0]["month"], "2026-11")
 
