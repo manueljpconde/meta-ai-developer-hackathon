@@ -11,10 +11,74 @@ Stored records are never changed: the engine call is pure and the
 given records are only read.
 """
 
+import unicodedata
+
 from engine.calc import calc_month
 from engine.move import MONTH_RE, move_payment
 
 RATE_KEYS = ("iva_rate", "retencao_rate", "irs_rate", "ss_rate")
+
+PT_MONTH_NAMES = (
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+)
+EN_MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)
+
+
+def normalize_name(name):
+    """Compare names ignoring case and accents (Q4 fallback).
+
+    Unicode NFKD decomposition with combining marks stripped, then
+    casefold, via the standard library only.
+    """
+    decomposed = unicodedata.normalize("NFKD", name or "")
+    stripped = "".join(
+        char for char in decomposed if not unicodedata.combining(char))
+    return stripped.casefold()
+
+
+def _month_index(name):
+    """Month index 1-12 for a Portuguese or English name, else None."""
+    wanted = normalize_name(name)
+    for index, candidate in enumerate(PT_MONTH_NAMES, start=1):
+        if normalize_name(candidate) == wanted:
+            return index
+    for index, candidate in enumerate(EN_MONTH_NAMES, start=1):
+        if normalize_name(candidate) == wanted:
+            return index
+    return None
+
+
+def resolve_month_reference(text, current_month):
+    """Resolve a month reference to ``YYYY-MM`` (Q5 rule), else None.
+
+    A bare month name means its next occurrence from the current
+    month: the same year when its index is at or after the current
+    month index, otherwise the next year. An explicit ``YYYY-MM``
+    passes through only when it matches the engine month shape.
+    """
+    if isinstance(text, str) and MONTH_RE.fullmatch(text):
+        return text
+    if (not isinstance(text, str) or not MONTH_RE.fullmatch(
+            current_month or "")):
+        return None
+    index = _month_index(text.strip())
+    if index is None:
+        return None
+    year, current_index = int(current_month[:4]), int(current_month[5:7])
+    if index < current_index:
+        year += 1
+    return "%04d-%02d" % (year, index)
+
+
+def _resolve_deal(deal, records):
+    """Resolve wording to registered deals by normalized name (Q4)."""
+    wanted = normalize_name(deal)
+    return [entry for entry in records
+            if normalize_name(entry.get("deal", "")) == wanted]
 
 
 def _part_for(entry):
@@ -87,12 +151,38 @@ def plan_nl_move(sentence, records, current_month, interpret,
             "status": "question",
             "question": "Which payment should I move?",
         }
+    if isinstance(target, str) and not MONTH_RE.fullmatch(target):
+        resolved = resolve_month_reference(target, current_month)
+        target = resolved if resolved is not None else target
     if not isinstance(target, str) or not MONTH_RE.fullmatch(target):
         return {
             "status": "question",
             "question": ("Which month should the %s %s payment move to?"
                          % (deal, payment)),
         }
+    if isinstance(records, (list, tuple)):
+        resolved = _resolve_deal(deal, records)
+        if len(resolved) == 1:
+            deal = resolved[0]["deal"]
+        elif len(resolved) > 1:
+            names = ", ".join(
+                "%s (%s)" % (entry["deal"], entry["month"])
+                for entry in resolved)
+            return {
+                "status": "question",
+                "question": ("Which %s payment did you mean: %s?"
+                             % (deal, names)),
+            }
+        elif records:
+            names = ", ".join(
+                "%s (%s)" % (entry["deal"], entry.get("month", ""))
+                for entry in records)
+            return {
+                "status": "question",
+                "question": ("%s was not found. Registered deals: %s. "
+                             "Which payment should I move?"
+                             % (deal, names)),
+            }
     try:
         outcome = move_payment(
             records,

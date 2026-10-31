@@ -1,51 +1,39 @@
-"""Move-payment scenario example in the app.
+"""No fixed worked example on the move page (Q3).
 
-The app shows the before and after forecast for one example move:
-the expected payment of 5 000,00 EUR in November 2026 moves to
-December 2026. The page changes nothing stored; it only displays.
+Example data comes only from the example-loading action: on a
+fresh database the move page shows the sentence form and the
+example action, and never the fixed ``T2 Campo de Ourique`` worked
+example or its fixed months. Loading the page changes nothing
+stored. No test calls the network.
 """
 
 from app.tests.helpers import AppTestCase
 
 
-class MoveExampleTest(AppTestCase):
-    def test_move_example_shows_before_and_after(self):
+class NoFixedExampleTest(AppTestCase):
+    def test_fresh_move_page_has_no_fixed_example(self):
         body = self.client.get("/scenarios/move").body
-        self.assertIn("novembro de 2026", body)
-        self.assertIn("dezembro de 2026", body)
+        self.assertNotIn("T2 Campo de Ourique", body)
+        self.assertNotIn("dezembro de 2026", body)
+        self.assertNotIn("December 2026", body)
 
-    def test_move_example_shows_example_figures(self):
-        response = self.client.get("/scenarios/move")
-        self.assertEqual(response.code, 200, response.body[:300])
-        for expected in (
-            "T2 Campo de Ourique",
-            "5 000,00",
-            "4 900,00",
-            "1 900,00",
-            "2 650,00",
-        ):
-            self.assertIn(expected, response.body)
-
-    def test_move_example_before_after_sections(self):
+    def test_fresh_move_page_shows_form_and_example_action(self):
         body = self.client.get("/scenarios/move").body
-        before = body.find("novembro de 2026")
-        after = body.find("dezembro de 2026")
-        self.assertNotEqual(before, -1)
-        self.assertNotEqual(after, -1)
-        self.assertLess(before, after)
+        self.assertIn('name="sentence"', body)
+        self.assertIn("/example", body)
 
-    def test_move_example_saves_nothing(self):
+    def test_move_page_saves_nothing(self):
         before = self.deal_count()
         response = self.client.get("/scenarios/move")
         self.assertEqual(response.code, 200, response.body[:300])
         self.assertEqual(self.deal_count(), before)
 
-    def test_move_example_in_english(self):
+    def test_move_page_in_english_has_no_fixed_example(self):
         self.set_language("en-GB")
         body = self.client.get("/scenarios/move").body
-        self.assertIn("November 2026", body)
-        self.assertIn("December 2026", body)
-        self.assertIn("5,000.00", body)
+        self.assertNotIn("T2 Campo de Ourique", body)
+        self.assertNotIn("December 2026", body)
+        self.assertIn("/example", body)
 
 
 if __name__ == "__main__":

@@ -1,40 +1,110 @@
+:root {
+  --canvas: #f6f7f4;
+  --ink: #16302c;
+  --muted-ink: #5f6f6a;
+  --accent: #f2b705;
+  --accent-soft: #fdf3d0;
+  --soft-green: #a7cec0;
+  --border: #e6ebe8;
+  --danger: #9e2f25;
+  --danger-bg: #f6e2de;
+  --info: #2f5b8a;
+  --info-bg: #e4ecf5;
+}
+
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: Figtree, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   line-height: 1.5;
   margin: 0 auto;
   max-width: 40rem;
   padding: 1rem;
+  background: #f6f7f4;
+  color: #16302c;
 }
 
 header nav a {
   margin-right: 1rem;
+  color: #16302c;
 }
 
 .lang {
   margin-top: 0.5rem;
 }
 
+.lang select {
+  color: #5f6f6a;
+}
+
 .error {
   display: block;
   font-weight: bold;
+  color: #9e2f25;
+  background: #f6e2de;
+  border: 1px solid #e6ebe8;
+  padding: 0.5rem;
 }
 
 .notice {
-  border: 1px solid currentColor;
+  border: 1px solid #e6ebe8;
   font-weight: bold;
   padding: 0.5rem;
+  background: #e4ecf5;
+  color: #2f5b8a;
+}
+
+.example {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid #e6ebe8;
+  background: #fdf3d0;
+}
+
+.example button {
+  background: #16302c;
+  color: #fff;
 }
 
 label {
   display: block;
   margin-top: 0.75rem;
+  color: #5f6f6a;
 }
 
 input, select, button {
   font: inherit;
   margin-top: 0.25rem;
+  width: 100%;
+  min-height: 2.75rem;
+  box-sizing: border-box;
 }
 
 button {
   margin-top: 1rem;
+  background: #16302c;
+  color: #fff;
+  border: 1px solid #16302c;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 3px solid #f2b705;
+  outline-offset: 2px;
+}
+
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid #f2b705;
+  outline-offset: 2px;
+}
+
+.soft-green {
+  background: #a7cec0;
+}
+
+@media (max-width: 30rem) {
+  body {
+    padding: 0.75rem;
+  }
 }

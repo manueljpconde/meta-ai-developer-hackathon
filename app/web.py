@@ -10,13 +10,14 @@ import html
 import os
 import re
 import secrets
+from datetime import datetime
 from decimal import Decimal
 from urllib.parse import parse_qsl, quote, unquote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app import i18n, store
 from engine.calc import agent_share, calc_month
 from engine.model_client import MetaMoveClient, ModelError
-from engine.move import move_payment
 from engine.nl_move import plan_nl_move
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
@@ -137,12 +138,126 @@ NL_CURRENT_MONTH_ENV = "APP_NL_CURRENT_MONTH"
 
 def nl_client():
     """Build the live interpretation client for one request."""
-    return MetaMoveClient()
+    records = nl_records_from_deals(store.list_deals(DB_PATH))
+    from engine.model_client import build_interpret_context
+
+    return MetaMoveClient(context=build_interpret_context(
+        nl_current_month(), records))
 
 
 def nl_current_month():
-    """Current month for NL move scenarios, from the environment."""
-    return os.environ.get(NL_CURRENT_MONTH_ENV, MOVE_EXAMPLE_CURRENT)
+    """Current month from the Lisbon server date, with test override."""
+    forced = os.environ.get(NL_CURRENT_MONTH_ENV, "")
+    if forced and valid_month(forced):
+        return forced
+    try:
+        today = datetime.now(ZoneInfo("Europe/Lisbon")).date()
+    except ZoneInfoNotFoundError:
+        today = datetime.now().date()
+    return today.strftime("%Y-%m")
+
+
+def add_months(year_month, delta):
+    """Shift a ``YYYY-MM`` month by delta months."""
+    year, month = int(year_month[:4]), int(year_month[5:7])
+    index = (year * 12 + (month - 1)) + delta
+    return "%04d-%02d" % (index // 12, index % 12 + 1)
+
+
+def example_deal_months():
+    """The two example deal months: next month and the month after."""
+    current = nl_current_month()
+    return add_months(current, 1), add_months(current, 2)
+
+
+EXAMPLE_SETTINGS = {
+    "share_rate": "0.5",
+    "iva_rate": "0.23",
+    "retencao_rate": "0.25",
+    "irs_rate": "0.30",
+    "ss_rate": "0.10",
+    "expenses_cents": 35000,
+}
+
+EXAMPLE_DEALS = (
+    {
+        "name": "Exemplo Lisboa",
+        "agency": "",
+        "share_rate": "50",
+        "share_rate_used": "0.5",
+        "agency_commission_cents": 1000000,
+        "part_base": 500000,
+        "stage": "confirmado",
+        "idempotency_key": "example-lisboa",
+    },
+    {
+        "name": "Exemplo Porto",
+        "agency": "",
+        "share_rate": "50",
+        "share_rate_used": "0.5",
+        "agency_commission_cents": 640000,
+        "part_base": 320000,
+        "stage": "confirmado",
+        "idempotency_key": "example-porto",
+    },
+)
+
+
+def apply_example_data():
+    """Write the example settings and the two idempotent deals."""
+    store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS))
+    first, second = example_deal_months()
+    for template, month in zip(EXAMPLE_DEALS, (first, second)):
+        deal = dict(template)
+        deal["month"] = month
+        deal["iva_rate"] = EXAMPLE_SETTINGS["iva_rate"]
+        deal["retencao_rate"] = EXAMPLE_SETTINGS["retencao_rate"]
+        deal["irs_rate"] = EXAMPLE_SETTINGS["irs_rate"]
+        deal["ss_rate"] = EXAMPLE_SETTINGS["ss_rate"]
+        deal["expenses_cents"] = EXAMPLE_SETTINGS["expenses_cents"]
+        store.insert_deal(DB_PATH, deal)
+
+
+def example_action(lang, csrf):
+    """The visible example-loading button posting to the confirm page."""
+    return (
+        '<form method="get" action="/example" class="example">'
+        '<button type="submit" data-i18n="example_action">%s</button>'
+        "</form>"
+        % esc(i18n.text(lang, "example_action"))
+    )
+
+
+def example_confirm_page(lang, csrf):
+    """Confirm page warning that example settings replace settings."""
+    return (
+        '<h1 data-i18n="example_title">%s</h1>'
+        '<p data-i18n="example_confirm">%s</p>'
+        '<form method="post" action="/example">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<button type="submit" data-i18n="example_apply">%s</button>'
+        "</form>"
+        % (
+            esc(i18n.text(lang, "example_title")),
+            esc(i18n.text(lang, "example_confirm")),
+            esc(csrf),
+            esc(i18n.text(lang, "example_apply")),
+        )
+    )
+
+
+def nl_empty_notice(lang):
+    """No-deals notice with links to New deal and the example action."""
+    return (
+        '<p class="notice" role="alert" data-i18n="nl_empty">%s</p>'
+        '<p><a href="/deals/new" data-i18n="home_new">%s</a> · '
+        '<a href="/example" data-i18n="example_action">%s</a></p>'
+        % (
+            esc(i18n.text(lang, "nl_empty")),
+            esc(i18n.text(lang, "home_new")),
+            esc(i18n.text(lang, "example_action")),
+        )
+    )
 
 
 def valid_month(text):
@@ -268,6 +383,8 @@ def page(lang, csrf, title, body):
     return (
         "<!DOCTYPE html>"
         '<html lang="%s"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,'
+        ' initial-scale=1">'
         "<title>%s</title>"
         '<link rel="stylesheet" href="/static/style.css">'
         "</head><body>"
@@ -632,105 +749,6 @@ def validate_nl_sentence(sentence):
     return ""
 
 
-MOVE_EXAMPLE_CURRENT = "2026-11"
-MOVE_EXAMPLE_MONTH = "2026-11"
-MOVE_EXAMPLE_TARGET = "2026-12"
-MOVE_EXAMPLE_EXPENSES = 35000
-
-
-def move_example_result():
-    """One example move, shown with its before and after forecast."""
-    records = [
-        {
-            "deal": "T2 Campo de Ourique",
-            "payment": "part-1",
-            "month": MOVE_EXAMPLE_MONTH,
-            "part_base": 500000,
-            "received": False,
-            "iva_rate": "0.23",
-            "retencao_rate": "0.25",
-            "irs_rate": "0.30",
-            "ss_rate": "0.10",
-        },
-    ]
-    move = {
-        "deal": "T2 Campo de Ourique",
-        "payment": "part-1",
-        "target_month": MOVE_EXAMPLE_TARGET,
-    }
-    return move_payment(records, move, MOVE_EXAMPLE_CURRENT,
-                        expenses_cents=MOVE_EXAMPLE_EXPENSES)
-
-
-def move_example_page(lang):
-    """Render the example move with its before and after forecast.
-
-    The before forecast holds the payment in November 2026; the after
-    forecast is the engine's own recalculation with the payment moved
-    to December 2026. Both figures come from the engine; nothing here
-    is saved.
-    """
-    outcome = move_example_result()
-    moved = outcome["moved"]
-    before = calc_month(
-        [{
-            "part_base": 500000,
-            "iva_rate": "0.23",
-            "retencao_rate": "0.25",
-            "irs_rate": "0.30",
-            "ss_rate": "0.10",
-        }],
-        expenses=MOVE_EXAMPLE_EXPENSES,
-    )
-    after = outcome["forecast"][MOVE_EXAMPLE_TARGET]
-    section = (
-        "<section><h2>%s</h2>"
-        "<dl>"
-        '<dt data-i18n="m_commission">%s</dt><dd>%s</dd>'
-        '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
-        '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
-        '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
-        "</dl></section>"
-    )
-
-    def figures(month, figures_result, breakdown):
-        return section % (
-            esc(format_month(month, lang)),
-            esc(i18n.text(lang, "m_commission")),
-            esc(format_amount(figures_result["commission"], lang)),
-            esc(i18n.text(lang, "m_bank")),
-            esc(format_amount(figures_result["bank_inflow"], lang)),
-            esc(i18n.text(lang, "m_protected")),
-            esc(format_amount(figures_result["protected_money"], lang)),
-            esc(i18n.text(lang, "b_iva")),
-            esc(format_amount(breakdown["iva"], lang)),
-            esc(i18n.text(lang, "b_irs")),
-            esc(format_amount(breakdown["irs_reserve"], lang)),
-            esc(i18n.text(lang, "b_ss")),
-            esc(format_amount(breakdown["ss_reserve"], lang)),
-            esc(i18n.text(lang, "m_really")),
-            esc(format_amount(figures_result["really_available"], lang)),
-        )
-
-    return (
-        "<h1>%s</h1>"
-        "<p>%s</p>"
-        "%s%s"
-        % (
-            esc(i18n.text(lang, "move_title")),
-            esc("%s · %s → %s" % (
-                moved["deal"],
-                format_month(moved["from_month"], lang),
-                format_month(moved["target_month"], lang),
-            )),
-            figures(MOVE_EXAMPLE_MONTH, before,
-                    before["protected_breakdown"]),
-            figures(MOVE_EXAMPLE_TARGET, after,
-                    after["protected_breakdown"]),
-        )
-    )
-
-
 def validate_deal(lang, fields, form_locale):
     errors = {}
     parsed = {}
@@ -915,10 +933,14 @@ def application(environ, start_response):
                 lang, session["csrf"], i18n.text(lang, "home_title"),
                 '<h1 data-i18n="home_title">%s</h1>'
                 '<p data-i18n="home_empty">%s</p>'
-                '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
+                '<p><a href="/deals/new" data-i18n="home_new">%s</a> · '
+                '<a href="/example" data-i18n="example_action">%s</a></p>'
+                "%s"
                 % (esc(i18n.text(lang, "home_title")),
                    esc(i18n.text(lang, "home_empty")),
-                   esc(i18n.text(lang, "home_new"))),
+                   esc(i18n.text(lang, "home_new")),
+                   esc(i18n.text(lang, "example_action")),
+                   example_action(lang, session["csrf"])),
             )
             return respond("200 OK", body)
         sections = "".join(
@@ -932,9 +954,15 @@ def application(environ, start_response):
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "GET":
+        deals = store.list_deals(DB_PATH)
+        notice = nl_empty_notice(lang) if not deals else ""
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
-                    nl_sentence_form(lang, session["csrf"])
-                    + move_example_page(lang))
+                    '<h1 data-i18n="move_title">%s</h1>'
+                    "%s%s%s"
+                    % (esc(i18n.text(lang, "move_title")),
+                       nl_sentence_form(lang, session["csrf"]),
+                       notice,
+                       example_action(lang, session["csrf"])))
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "POST":
@@ -945,6 +973,7 @@ def application(environ, start_response):
             return forbidden()
         sentence = fields.get("sentence", "")
         problem = validate_nl_sentence(sentence)
+        deals = store.list_deals(DB_PATH)
         if problem == "empty":
             outcome = plan_nl_move(
                 sentence, [], nl_current_month(), _unused_interpret)
@@ -953,10 +982,14 @@ def application(environ, start_response):
                 "status": "question",
                 "question": i18n.text(lang, "err_too_long"),
             }
+        elif not deals:
+            outcome = {
+                "status": "question",
+                "question": i18n.text(lang, "nl_empty"),
+            }
         else:
             settings = store.get_settings(DB_PATH)
             expenses = settings["expenses_cents"] if settings else 0
-            deals = store.list_deals(DB_PATH)
             records = nl_records_from_deals(deals)
             try:
                 client = nl_client()
@@ -966,12 +999,30 @@ def application(environ, start_response):
                 outcome = plan_nl_move(
                     sentence, records, nl_current_month(),
                     client.interpret_move, expenses_cents=expenses)
+        notice = nl_empty_notice(lang) if not deals else ""
         content = (nl_sentence_form(lang, session["csrf"], sentence)
+                   + notice
                    + nl_move_result_page(lang, sentence, outcome)
-                   + move_example_page(lang))
+                   + example_action(lang, session["csrf"]))
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
                     content)
         return respond("200 OK", body)
+
+    if path == "/example" and method == "GET":
+        body = page(lang, session["csrf"],
+                    i18n.text(lang, "example_title"),
+                    example_confirm_page(lang, session["csrf"]))
+        return respond("200 OK", body)
+
+    if path == "/example" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        apply_example_data()
+        first, _second = example_deal_months()
+        return redirect("/?month=" + first)
 
     if path == "/language" and method == "POST":
         fields = read_post_form()
