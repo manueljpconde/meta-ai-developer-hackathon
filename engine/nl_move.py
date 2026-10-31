@@ -106,23 +106,33 @@ def _forecast(records, expenses_cents):
 
 
 def plan_nl_move(sentence, records, current_month, interpret,
-                 expenses_cents=0):
+                 expenses_cents=0, lang="en"):
     """Plan one move from a sentence, without changing stored records.
 
     ``interpret`` turns the sentence into a dict: either a move with
-    ``deal``, ``payment`` and ``target_month``, or ``{"question":
-    ...}`` when the sentence itself is ambiguous. The result is one
-    of three shapes: ``{"status": "moved", "moved": ..., "before":
-    ..., "after": ...}`` for a clear move, ``{"status": "question",
-    "question": ...}`` asking one focused question instead of
-    guessing, or ``{"status": "error", "message": ...}`` when the
-    model call or its answer failed.
+    ``deal`` and ``target_month`` plus, optionally, ``payment``, or
+    a question dict when the sentence itself is ambiguous. The result
+    is one of three shapes: a moved result with ``moved``,
+    ``before`` and ``after`` for a clear move, a question result
+    asking one focused question instead of guessing, or an error
+    result when the model call or its answer failed.
+
+    When the matched deal has exactly one unpaid payment, that payment
+    is used whatever the model returned; with more than one unpaid
+    payment, the result asks which one, listing the payments by month.
+    With lang set to Portuguese, the questions are fully Portuguese;
+    otherwise they are English. This function never raises for a move
+    it was given: refusals from the engine become questions.
     """
+    pt = (lang == "pt")
+
+    def ask(text_en, text_pt):
+        return {"status": "question",
+                "question": text_pt if pt else text_en}
+
     if not isinstance(sentence, str) or not sentence.strip():
-        return {
-            "status": "question",
-            "question": "Which payment should I move, and to which month?",
-        }
+        return ask("Which payment should I move, and to which month?",
+                   "Que pagamento devo mover, e para que mês?")
     try:
         reading = interpret(sentence)
     except Exception as exc:
@@ -145,44 +155,78 @@ def plan_nl_move(sentence, records, current_month, interpret,
     deal = reading.get("deal")
     payment = reading.get("payment")
     target = reading.get("target_month")
-    if (not isinstance(deal, str) or not deal
-            or not isinstance(payment, str) or not payment):
-        return {
-            "status": "question",
-            "question": "Which payment should I move?",
-        }
+    if not isinstance(deal, str) or not deal:
+        return ask("Which payment should I move?",
+                   "Que pagamento devo mover?")
+    if payment is not None and not isinstance(payment, str):
+        return ask("Which payment should I move?",
+                   "Que pagamento devo mover?")
     if isinstance(target, str) and not MONTH_RE.fullmatch(target):
         resolved = resolve_month_reference(target, current_month)
         target = resolved if resolved is not None else target
     if not isinstance(target, str) or not MONTH_RE.fullmatch(target):
-        return {
-            "status": "question",
-            "question": ("Which month should the %s %s payment move to?"
-                         % (deal, payment)),
-        }
+        return ask(
+            "Which month should the %s %s payment move to?"
+            % (deal, payment),
+            "Para que mês deve o pagamento %s %s ser movido?"
+            % (deal, payment or ""),
+        )
     if isinstance(records, (list, tuple)):
         resolved = _resolve_deal(deal, records)
         if len(resolved) == 1:
             deal = resolved[0]["deal"]
         elif len(resolved) > 1:
-            names = ", ".join(
-                "%s (%s)" % (entry["deal"], entry["month"])
-                for entry in resolved)
-            return {
-                "status": "question",
-                "question": ("Which %s payment did you mean: %s?"
-                             % (deal, names)),
-            }
+            exact = {entry["deal"] for entry in resolved}
+            if len(exact) == 1:
+                deal = resolved[0]["deal"]
+            else:
+                names = ", ".join(
+                    "%s (%s)" % (entry["deal"], entry["month"])
+                    for entry in resolved)
+                return ask(
+                    "Which %s payment did you mean: %s?" % (deal, names),
+                    "Qual pagamento %s: %s?" % (deal, names))
         elif records:
             names = ", ".join(
                 "%s (%s)" % (entry["deal"], entry.get("month", ""))
                 for entry in records)
-            return {
-                "status": "question",
-                "question": ("%s was not found. Registered deals: %s. "
-                             "Which payment should I move?"
-                             % (deal, names)),
-            }
+            return ask(
+                "%s was not found. Registered deals: %s. "
+                "Which payment should I move?" % (deal, names),
+                "%s não foi encontrado. Negócios registados: %s. "
+                "Que pagamento devo mover?" % (deal, names),
+            )
+    deal_records = []
+    if isinstance(records, (list, tuple)):
+        deal_records = [
+            entry for entry in records
+            if normalize_name(entry.get("deal", ""))
+            == normalize_name(deal)
+        ]
+    unpaid = [entry for entry in deal_records
+              if not entry.get("received", False)]
+    if len(unpaid) == 1:
+        payment = unpaid[0].get("payment", "")
+    elif len(unpaid) > 1:
+        matches = [entry for entry in unpaid
+                   if entry.get("payment", "") == payment]
+        if len(matches) == 1 and isinstance(payment, str) and payment:
+            payment = matches[0].get("payment", "")
+        else:
+            names = ", ".join(
+                "%s (%s)" % (entry.get("payment", ""),
+                             entry.get("month", ""))
+                for entry in unpaid)
+            return ask(
+                "Which %s payment should I move: %s?" % (deal, names),
+                "Qual pagamento %s deve ser movido: %s?" % (deal, names),
+            )
+    if not isinstance(payment, str) or not payment:
+        if not deal_records:
+            pass
+        else:
+            return ask("Which %s payment should I move?" % deal,
+                       "Que pagamento %s deve ser movido?" % deal)
     try:
         outcome = move_payment(
             records,
@@ -190,8 +234,11 @@ def plan_nl_move(sentence, records, current_month, interpret,
             current_month,
             expenses_cents=expenses_cents,
         )
-    except ValueError as exc:
-        return {"status": "question", "question": str(exc)}
+    except ValueError:
+        return ask("That move is not possible. "
+                   "Which payment should I move?",
+                   "Esse movimento não é possível. "
+                   "Que pagamento devo mover?")
     return {
         "status": "moved",
         "moved": outcome["moved"],

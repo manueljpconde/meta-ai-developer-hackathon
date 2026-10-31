@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app import i18n, store
 from engine.calc import agent_share, calc_month
-from engine.model_client import MetaMoveClient, ModelError
+from engine.model_client import API_KEY_ENV_VAR, MetaMoveClient, ModelError
 from engine.nl_move import plan_nl_move
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
@@ -629,23 +629,29 @@ def forecast_section(lang, month, deals, expenses_cents):
 
 def nl_sentence_form(lang, csrf, sentence=""):
     """The one-sentence form starting a move scenario."""
-    return (
+    simulating = i18n.text(lang, "nl_simulating")
+    head = (
         '<form method="post" action="/scenarios/move">'
         '<input type="hidden" name="csrf_token" value="%s">'
         '<div><label for="nl-sentence" data-i18n="nl_label">%s</label>'
         '<input id="nl-sentence" name="sentence" value="%s" maxlength="%d">'
-        '<p>%s</p></div>'
-        '<button type="submit" data-i18n="nl_submit">%s</button>'
-        "</form>"
+        "<p>%s</p></div>"
         % (
             esc(csrf),
             esc(i18n.text(lang, "nl_label")),
             esc(sentence),
             NL_SENTENCE_MAX_CHARS,
             esc(i18n.text(lang, "nl_hint")),
-            esc(i18n.text(lang, "nl_submit")),
         )
     )
+    button = (
+        '<button type="submit" data-i18n="nl_submit" '
+        "onclick=\"this.disabled = true; "
+        "this.textContent = '" + simulating + "'; "
+        'this.form.submit(); return false;">'
+        + esc(i18n.text(lang, "nl_submit")) + "</button>"
+    )
+    return head + button + "</form>"
 
 
 def nl_month_lines(lang, month, figures_result):
@@ -713,8 +719,11 @@ def nl_move_result_page(lang, sentence, outcome):
     if status == "question":
         return '<p class="notice" role="alert">%s</p>' % esc(
             outcome["question"])
+    message = outcome.get("message") or ""
+    if API_KEY_ENV_VAR in message:
+        return '<p class="notice" role="alert">%s</p>' % esc(message)
     return '<p class="notice" role="alert">%s</p>' % esc(
-        outcome.get("message", i18n.text(lang, "refused_msg")))
+        i18n.text(lang, "nl_no_connection"))
 
 
 def nl_records_from_deals(deals):
@@ -982,9 +991,11 @@ def application(environ, start_response):
         sentence = fields.get("sentence", "")
         problem = validate_nl_sentence(sentence)
         deals = store.list_deals(DB_PATH)
+        request_lang = "pt" if lang == "pt-PT" else "en"
         if problem == "empty":
             outcome = plan_nl_move(
-                sentence, [], nl_current_month(), _unused_interpret)
+                sentence, [], nl_current_month(), _unused_interpret,
+                lang=request_lang)
         elif problem == "too_long":
             outcome = {
                 "status": "question",
@@ -1006,7 +1017,14 @@ def application(environ, start_response):
             else:
                 outcome = plan_nl_move(
                     sentence, records, nl_current_month(),
-                    client.interpret_move, expenses_cents=expenses)
+                    client.interpret_move, expenses_cents=expenses,
+                    lang=request_lang)
+                if outcome.get("status") == "error":
+                    if API_KEY_ENV_VAR in (outcome.get("message") or ""):
+                        outcome = {"status": "error",
+                                   "message": outcome["message"]}
+                    else:
+                        outcome = {"status": "error", "message": ""}
         notice = nl_empty_notice(lang) if not deals else ""
         content = (nl_sentence_form(lang, session["csrf"], sentence)
                    + notice

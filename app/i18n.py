@@ -70,6 +70,9 @@ STRINGS = {
         "example_apply": "Carregar exemplo",
         "refused_title": "Pedido recusado",
         "refused_msg": "Não foi possível validar o pedido. Nada foi alterado.",
+        "nl_simulating": "A simular...",
+        "nl_cannot_move": "Esse movimento não é possível. Que pagamento devo mover?",
+        "nl_no_connection": "Sem ligação. Tenta de novo.",
     },
     "en-GB": {
         "nav_home": "Forecast",
@@ -135,6 +138,9 @@ STRINGS = {
         "example_apply": "Load example",
         "refused_title": "Request refused",
         "refused_msg": "The request could not be verified. Nothing was changed.",
+        "nl_simulating": "Simulating...",
+        "nl_cannot_move": "That move is not possible. Which payment should I move?",
+        "nl_no_connection": "No connection. Try again.",
     },
 }
 

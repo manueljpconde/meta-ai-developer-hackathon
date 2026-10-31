@@ -52,16 +52,20 @@ def build_interpret_context(current_month, records):
     """Per-request prompt context: month, deals and month tables (T3).
 
     Names the current month (``YYYY-MM``), the registered deal names
-    with their expected months, and the Portuguese and English month
-    names with the next-occurrence rule for bare names.
+    with each deal's payment and its expected month, and the
+    Portuguese and English month names with the next-occurrence rule
+    for bare names.
     """
     from engine.nl_move import EN_MONTH_NAMES, PT_MONTH_NAMES
 
     lines = ["Current month: %s." % current_month]
     if records:
         deals = ", ".join(
-            "%s (expected %s)" % (entry.get("deal", ""),
-                                  entry.get("month", ""))
+            "%s (payment %s, expected %s)" % (
+                entry.get("deal", ""),
+                entry.get("payment", ""),
+                entry.get("month", ""),
+            )
             for entry in records)
         lines.append("Registered deals: %s." % deals)
     else:
