@@ -420,14 +420,19 @@ def get_or_create_tenant(path, email, now=None):
     return {"id": row[0], "email": row[1], "created_at": row[2]}
 
 
+
 def delete_tenant(path, tenant_id):
     init_db(path)
     conn = _connect(path)
     try:
-        # Delete all rows for this tenant; cascade handles sessions but do explicit for clarity
+        row = conn.execute("SELECT email FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
+        email = row[0] if row else None
         conn.execute("DELETE FROM deals WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM settings WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM sessions WHERE tenant_id = ?", (tenant_id,))
+        if email is not None:
+            conn.execute("DELETE FROM login_links WHERE email = ?", (email,))
+            conn.execute("DELETE FROM rate_limits WHERE key = ?", (email,))
         conn.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
         conn.commit()
     finally:
