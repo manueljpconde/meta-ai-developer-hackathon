@@ -1056,20 +1056,9 @@ def application(environ, start_response):
             return respond("200 OK", body)
         sess = auth.create_session_for_link(DB_PATH, link)
         cookie = "session=%s; HttpOnly; Path=/; SameSite=Lax; Max-Age=%d" % (sess["id"], auth.SESSION_EXPIRY_SECONDS)
-        # Secure flag if HTTPS base
-        body = page(lang, sess["csrf_token"], i18n.text(lang, "home_title"),
-                    '<p data-i18n="auth_success">%s</p>' % esc(i18n.text(lang, "auth_success")), "/")
-        headers = [("Location", "/")]
-        headers.append(("Set-Cookie", cookie))
-        data = body.encode("utf-8")
-        hs = [("Content-Type", "text/html; charset=utf-8"),
-              ("Content-Security-Policy", "default-src 'self'"),
-              ("X-Content-Type-Options", "nosniff"),
-              ("Content-Length", str(len(data)))]
-        for c in new_cookies:
-            hs.append(("Set-Cookie", c))
-        hs.append(("Set-Cookie", cookie))
-        start_response("303 See Other", [("Location", "/")] + [("Set-Cookie", cookie)] + [("Set-Cookie", c) for c in new_cookies])
+        base_url = os.environ.get("APP_BASE_URL", "http://localhost:8000")
+        if base_url.startswith("https://"):
+            cookie += "; Secure"
         return respond("303 See Other", "", [("Location", "/"), ("Set-Cookie", cookie)])
     if path == "/signout" and method == "POST":
         fields = read_post_form()

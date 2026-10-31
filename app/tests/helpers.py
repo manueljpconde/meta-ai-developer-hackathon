@@ -103,9 +103,14 @@ class Client:
             env["HTTP_ACCEPT_LANGUAGE"] = language
         captured = {}
 
-        def start_response(status, headers):
+        def start_response(status, headers, exc_info=None):
+            if captured:
+                raise AssertionError("Headers already set!")
             captured["status"] = status
             captured["headers"] = headers
+            def write(data):
+                raise AssertionError("Headers already set!")
+            return write
 
         chunks = web.application(env, start_response)
         body = b"".join(chunks)
