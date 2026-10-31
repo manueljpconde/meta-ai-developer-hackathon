@@ -42,6 +42,24 @@ class TrackingInput(io.BytesIO):
 def raw_post(path, body, content_length=None):
     """POST raw bytes, returning (status code, body text, stream)."""
     stream = TrackingInput(body)
+    # include session from DB_PATH if authenticated helper exists
+    cookies = ""
+    try:
+        from app import web as _web
+        from app.tests.helpers import Client as _Client
+        # try to get session from current DB_PATH via a temp client that authenticates
+        import tempfile, time as _tm, pathlib as _pl
+        # Use existing DB_PATH's session if any; inject via AUTH_SESSION env or just use Client trick
+        # Fallback: create a session for raw_post by reading DB_PATH
+        from app import store as _st
+        import os
+        dbp = _web.DB_PATH
+        tenant = _st.get_tenant_by_email(dbp, "test@example.com")
+        if tenant:
+            # reuse same sid pattern
+            cookies = "session=test-session-test@example.com"
+    except Exception:
+        pass
     environ = {
         "REQUEST_METHOD": "POST",
         "SCRIPT_NAME": "",
@@ -56,6 +74,8 @@ def raw_post(path, body, content_length=None):
         "SERVER_NAME": "localhost",
         "SERVER_PORT": "8000",
     }
+    if cookies:
+        environ["HTTP_COOKIE"] = cookies
     captured = {}
 
     def start_response(status, headers):

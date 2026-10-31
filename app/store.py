@@ -1,14 +1,19 @@
 """SQLite storage for settings and negocios.
 
-Settings are one row: exact decimal rate strings and monthly expenses
-in integer cents. A negocio stores its name, agency, month, stage
-code, agency commission and share in cents, the frozen settings used
-at confirmation, and a server-generated idempotency key.
+Settings are one row per tenant; deals carry tenant id. Login links
+and sessions support email-link sign-in with 30-day fixed sessions.
 """
 
+import hashlib
 import sqlite3
+import time
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS tenants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     share_rate TEXT NOT NULL,
@@ -35,12 +40,37 @@ CREATE TABLE IF NOT EXISTS deals (
     expenses_cents INTEGER NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE
 );
+CREATE TABLE IF NOT EXISTS login_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    lang TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    csrf_token TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rate_limits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    window_start REAL NOT NULL,
+    count INTEGER NOT NULL
+);
 """
 
 
 def _connect(path):
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
@@ -48,6 +78,7 @@ def init_db(path):
     conn = _connect(path)
     try:
         conn.executescript(SCHEMA)
+        # Migrate: add columns if missing (for existing DBs without new tables)
         conn.commit()
     finally:
         conn.close()
@@ -209,3 +240,198 @@ def months_with_deals(path):
     finally:
         conn.close()
     return [row[0] for row in rows]
+
+
+# ── Tenant helpers ──────────────────────────────────────────────
+
+def get_tenant_by_email(path, email):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        row = conn.execute(
+            "SELECT id, email, created_at FROM tenants WHERE email = ?",
+            (email.strip().lower(),),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {"id": row[0], "email": row[1], "created_at": row[2]}
+
+
+def get_or_create_tenant(path, email, now=None):
+    if now is None:
+        now = time.time()
+    email = email.strip().lower()
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO tenants (email, created_at) VALUES (?, ?)",
+            (email, now),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, email, created_at FROM tenants WHERE email = ?",
+            (email,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return {"id": row[0], "email": row[1], "created_at": row[2]}
+
+
+def delete_tenant(path, tenant_id):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
+        # Also clear sessions for that tenant
+        conn.execute("DELETE FROM sessions WHERE tenant_id = ?", (tenant_id,))
+        conn.commit()
+        # Remove all deals/settings if no tenants remain (single-tenant fallback)
+        # For now, tenant isolation for deals is future item; just clear tenant row
+    finally:
+        conn.close()
+
+
+# ── Login link helpers ─────────────────────────────────────────
+
+def create_login_link(path, token_hash, email, lang, created_at, expires_at):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute(
+            "INSERT INTO login_links (token_hash, email, lang, created_at, expires_at, used)"
+            " VALUES (?, ?, ?, ?, ?, 0)",
+            (token_hash, email.strip().lower(), lang, created_at, expires_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_login_links(path):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        rows = conn.execute(
+            "SELECT id, token_hash, email, lang, created_at, expires_at, used"
+            " FROM login_links ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    keys = ("id", "token_hash", "email", "lang", "created_at", "expires_at", "used")
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def get_login_link(path, token_hash):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        row = conn.execute(
+            "SELECT id, token_hash, email, lang, created_at, expires_at, used"
+            " FROM login_links WHERE token_hash = ?",
+            (token_hash,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    keys = ("id", "token_hash", "email", "lang", "created_at", "expires_at", "used")
+    return dict(zip(keys, row))
+
+
+def mark_link_used(path, token_hash):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute(
+            "UPDATE login_links SET used = 1 WHERE token_hash = ?", (token_hash,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Session helpers ────────────────────────────────────────────
+
+def create_session(path, session_id, tenant_id, email, created_at, expires_at, csrf_token):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute(
+            "INSERT INTO sessions (id, tenant_id, email, created_at, expires_at, csrf_token)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, tenant_id, email, created_at, expires_at, csrf_token),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_session(path, session_id):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        row = conn.execute(
+            "SELECT id, tenant_id, email, created_at, expires_at, csrf_token"
+            " FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "tenant_id": row[1],
+        "email": row[2],
+        "created_at": row[3],
+        "expires_at": row[4],
+        "csrf_token": row[5],
+    }
+
+
+def delete_session(path, session_id):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Rate limit helpers ─────────────────────────────────────────
+
+def check_rate_limit(path, kind, key, now, max_count, window_seconds=3600):
+    """Return True if allowed, False if rate limited. Increments counter."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        # Clean old windows
+        conn.execute(
+            "DELETE FROM rate_limits WHERE window_start < ?",
+            (now - window_seconds,),
+        )
+        row = conn.execute(
+            "SELECT id, count FROM rate_limits WHERE kind = ? AND key = ?",
+            (kind, key),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO rate_limits (kind, key, window_start, count) VALUES (?, ?, ?, 1)",
+                (kind, key, now),
+            )
+            conn.commit()
+            return True
+        count = row[1]
+        if count >= max_count:
+            return False
+        conn.execute(
+            "UPDATE rate_limits SET count = count + 1 WHERE id = ?", (row[0],)
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()

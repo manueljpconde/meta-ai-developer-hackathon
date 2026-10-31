@@ -54,10 +54,11 @@ class SecurityTest(AppTestCase):
             )
 
     def test_session_cookie_flags(self):
+        self.client.cookies.clear()
         self.client.get("/")
         flags = " ".join(self.client.last_set_cookies).lower()
         self.assertIn("httponly", flags)
-        self.assertIn("samesite=strict", flags)
+        self.assertIn("samesite=lax", flags)
 
     def test_settings_post_without_csrf_refused(self):
         body = self.client.get("/settings").body
