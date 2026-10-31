@@ -203,9 +203,14 @@ EXAMPLE_DEALS = (
 )
 
 
-def apply_example_data():
+def apply_example_data(tenant_id=None):
     """Write the example settings and the two idempotent deals."""
-    store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS))
+    # Called from /example POST where session is available; caller passes tenant_id.
+    # Fallback without tenant keeps legacy test helper working but should not happen in web route.
+    if tenant_id is not None:
+        store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS), tenant_id=tenant_id)
+    else:
+        store.save_settings(DB_PATH, dict(EXAMPLE_SETTINGS))
     first, second = example_deal_months()
     for template, month in zip(EXAMPLE_DEALS, (first, second)):
         deal = dict(template)
@@ -215,7 +220,10 @@ def apply_example_data():
         deal["irs_rate"] = EXAMPLE_SETTINGS["irs_rate"]
         deal["ss_rate"] = EXAMPLE_SETTINGS["ss_rate"]
         deal["expenses_cents"] = EXAMPLE_SETTINGS["expenses_cents"]
-        store.insert_deal(DB_PATH, deal)
+        if tenant_id is not None:
+            store.insert_deal(DB_PATH, deal, tenant_id=tenant_id)
+        else:
+            store.insert_deal(DB_PATH, deal)
 
 
 def example_action(lang, csrf):
@@ -362,6 +370,38 @@ def session_for(environ):
     SESSIONS[token] = record
     cookie = "session=%s; HttpOnly; Path=/; SameSite=Lax" % token
     return record, [cookie]
+
+
+# ── Session gate: default-deny public list ──────────────────────
+# Every route needs a signed-in agent except these.
+PUBLIC_ROUTES = {"/signin", "/auth/verify", "/language"}
+PUBLIC_PREFIXES = ("/static/",)
+
+def is_public_path(path):
+    if path in PUBLIC_ROUTES:
+        return True
+    for prefix in PUBLIC_PREFIXES:
+        if path.startswith(prefix):
+            return True
+    return False
+
+# Enumerate all app routes for the enumeration test.
+# The test imports this and proves every non-public one redirects.
+APP_ROUTES = [
+    ("/", "GET"),
+    ("/signin", "GET"), ("/signin", "POST"),
+    ("/auth/verify", "GET"),
+    ("/signout", "POST"),
+    ("/account/delete", "GET"), ("/account/delete", "POST"),
+    ("/static/style.css", "GET"),
+    ("/settings", "GET"), ("/settings", "POST"),
+    ("/deals/new", "GET"),
+    ("/deals/review", "POST"),
+    ("/deals/confirm", "POST"),
+    ("/scenarios/move", "GET"), ("/scenarios/move", "POST"),
+    ("/example", "GET"), ("/example", "POST"),
+    ("/language", "POST"),
+]
 
 
 def language_for(environ):
@@ -891,6 +931,21 @@ def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/") or "/"
 
+    # ── Session gate: default deny, public list only
+    if not is_public_path(path):
+        if not session.get("authenticated"):
+            def _redirect(location, cookies=()):
+                data = b""
+                headers = [("Location", location), ("Content-Type", "text/html; charset=utf-8"),
+                           ("Content-Length", "0")]
+                for cookie in cookies:
+                    headers.append(("Set-Cookie", cookie))
+                for cookie in new_cookies:
+                    headers.append(("Set-Cookie", cookie))
+                start_response("303 See Other", headers)
+                return [data]
+            return _redirect("/signin")
+
     def respond(status, body, extra=None):
         data = body.encode("utf-8")
         headers = [
@@ -1051,13 +1106,6 @@ def application(environ, start_response):
                     '<p data-i18n="delete_done">%s</p>' % esc(i18n.text(lang, "delete_done")))
         return respond("200 OK", body, [("Set-Cookie", clear)])
 
-    # ── Session gate: data pages require authentication ──
-    PROTECTED = ("/", "/settings", "/deals/new", "/deals/review", "/deals/confirm",
-                 "/scenarios/move", "/example")
-    if path in PROTECTED or path.startswith("/deals/"):
-        if not session.get("authenticated"):
-            return redirect("/signin")
-
     if path == "/static/style.css":
         try:
             with open(os.path.join(STATIC_DIR, "style.css"), "rb") as handle:
@@ -1077,12 +1125,12 @@ def application(environ, start_response):
     if path == "/" and method == "GET":
         query = read_query(environ)
         only = query.get("month", "")
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         expenses = settings["expenses_cents"] if settings else 0
         if only and valid_month(only):
             months = [only]
         else:
-            months = store.months_with_deals(DB_PATH)
+            months = store.months_with_deals(DB_PATH, tenant_id=session["tenant_id"])
         if not months:
             body = page(
                 lang, session["csrf"], i18n.text(lang, "home_title"),
@@ -1100,7 +1148,7 @@ def application(environ, start_response):
             )
             return respond("200 OK", body)
         sections = "".join(
-            forecast_section(lang, month, store.list_deals(DB_PATH, month),
+            forecast_section(lang, month, store.list_deals(DB_PATH, month, tenant_id=session["tenant_id"]),
                              expenses)
             for month in months
         )
@@ -1111,7 +1159,7 @@ def application(environ, start_response):
         return respond("200 OK", body)
 
     if path == "/scenarios/move" and method == "GET":
-        deals = store.list_deals(DB_PATH)
+        deals = store.list_deals(DB_PATH, tenant_id=session["tenant_id"])
         notice = nl_empty_notice(lang) if not deals else ""
         body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
                     '<h1 data-i18n="move_title">%s</h1>'
@@ -1131,7 +1179,7 @@ def application(environ, start_response):
             return forbidden()
         sentence = fields.get("sentence", "")
         problem = validate_nl_sentence(sentence)
-        deals = store.list_deals(DB_PATH)
+        deals = store.list_deals(DB_PATH, tenant_id=session["tenant_id"])
         request_lang = "pt" if lang == "pt-PT" else "en"
         if problem == "empty":
             outcome = plan_nl_move(
@@ -1148,7 +1196,7 @@ def application(environ, start_response):
                 "question": i18n.text(lang, "nl_empty"),
             }
         else:
-            settings = store.get_settings(DB_PATH)
+            settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
             expenses = settings["expenses_cents"] if settings else 0
             records = nl_records_from_deals(deals)
             try:
@@ -1187,7 +1235,7 @@ def application(environ, start_response):
             return fields
         if not csrf_ok(fields):
             return forbidden()
-        apply_example_data()
+        apply_example_data(tenant_id=session["tenant_id"])
         first, _second = example_deal_months()
         return redirect("/?month=" + first)
 
@@ -1204,7 +1252,7 @@ def application(environ, start_response):
         return redirect("/", [cookie])
 
     if path == "/settings" and method == "GET":
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         values = {}
         if settings is not None:
             values = {
@@ -1247,11 +1295,11 @@ def application(environ, start_response):
             "irs_rate": parsed["irs"],
             "ss_rate": parsed["ss"],
             "expenses_cents": parsed["expenses"],
-        })
+        }, tenant_id=session["tenant_id"])
         return redirect("/settings")
 
     if path == "/deals/new" and method == "GET":
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
                     deal_form(lang, session["csrf"], {}, {}, settings),
                     "/deals/new")
@@ -1266,7 +1314,7 @@ def application(environ, start_response):
         form_locale = fields.get("form_locale", lang)
         if form_locale not in i18n.SUPPORTED:
             form_locale = lang
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         errors, parsed = validate_deal(lang, fields, form_locale)
         if settings is None:
             errors["commission"] = i18n.text(lang, "err_settings")
@@ -1314,7 +1362,7 @@ def application(environ, start_response):
         form_locale = fields.get("form_locale", lang)
         if form_locale not in i18n.SUPPORTED:
             form_locale = lang
-        settings = store.get_settings(DB_PATH)
+        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         errors, parsed = validate_deal(lang, fields, form_locale)
         if settings is None:
             errors["commission"] = i18n.text(lang, "err_settings")
@@ -1375,7 +1423,7 @@ def application(environ, start_response):
             "ss_rate": settings["ss_rate"],
             "expenses_cents": settings["expenses_cents"],
             "idempotency_key": fields.get("idempotency_key", ""),
-        })
+        }, tenant_id=session["tenant_id"])
         return redirect("/?month=" + parsed["month"])
 
     start_response("404 Not Found", [("Content-Length", str(len(b"Not found"))),
