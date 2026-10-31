@@ -398,6 +398,7 @@ APP_ROUTES = [
     ("/deals/new", "GET"),
     ("/deals/review", "POST"),
     ("/deals/confirm", "POST"),
+    ("/deals/edit", "GET"), ("/deals/update", "POST"),
     ("/scenarios/move", "GET"), ("/scenarios/move", "POST"),
     ("/example", "GET"), ("/example", "POST"),
     ("/language", "POST"),
@@ -1424,6 +1425,138 @@ def application(environ, start_response):
             "expenses_cents": settings["expenses_cents"],
             "idempotency_key": fields.get("idempotency_key", ""),
         }, tenant_id=session["tenant_id"])
+        return redirect("/?month=" + parsed["month"])
+
+    if path == "/deals/edit" and method == "GET":
+        query = read_query(environ)
+        raw_id = query.get("id", "")
+        try:
+            did = int(raw_id)
+        except (TypeError, ValueError):
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+        deal = store.get_deal(DB_PATH, did, session["tenant_id"])
+        if deal is None:
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
+        values = {
+            "name": deal["name"],
+            "commission": format_edit_amount(deal["agency_commission_cents"], lang),
+            "share": format_edit_percent(deal["share_rate_used"], lang),
+            "month": deal["month"],
+            "stage": deal["stage"],
+            "agency": deal["agency"],
+        }
+        # Render edit form posting to /deals/update with id
+        body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
+                    '<h1 data-i18n="deal_title">%s</h1>'
+                    '<form method="post" action="/deals/update?id=%d">'
+                    '<input type="hidden" name="csrf_token" value="%s">'
+                    '<input type="hidden" name="form_locale" value="%s">'
+                    '<div><label for="deal-name" data-i18n="f_name">%s</label>'
+                    '<input id="deal-name" name="name" value="%s">%s</div>'
+                    '<div><label for="deal-commission" data-i18n="f_commission">%s</label>'
+                    '<input id="deal-commission" name="commission" value="%s">%s</div>'
+                    '<div><label for="deal-share" data-i18n="f_share">%s</label>'
+                    '<input id="deal-share" name="share" value="%s">%s</div>'
+                    '<div><label for="deal-month" data-i18n="f_month">%s</label>'
+                    '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
+                    '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
+                    '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
+                    '<input id="deal-agency" name="agency" value="%s">%s</div>'
+                    '<button type="submit" data-i18n="btn_confirm">%s</button>'
+                    "</form>"
+                    % (
+                        esc(i18n.text(lang, "deal_title")), did, esc(session["csrf"]), esc(lang),
+                        esc(i18n.text(lang, "f_name")), esc(values["name"]), "",
+                        esc(i18n.text(lang, "f_commission")), esc(values["commission"]), "",
+                        esc(i18n.text(lang, "f_share")), esc(values["share"]), "",
+                        esc(i18n.text(lang, "f_month")), esc(values["month"]), "",
+                        esc(i18n.text(lang, "f_stage")), "".join(
+                            '<label><input type="radio" name="stage" value="%s"%s>%s</label>'
+                            % (code, ' checked' if values["stage"] == code else '', esc(i18n.text(lang, "st_" + code)))
+                            for code in STAGES
+                        ), "",
+                        esc(i18n.text(lang, "f_agency")), esc(values["agency"]), "",
+                        esc(i18n.text(lang, "btn_confirm")),
+                    ), "/deals/edit")
+        return respond("200 OK", body)
+
+    if path == "/deals/update" and method == "POST":
+        query = read_query(environ)
+        raw_id = query.get("id", "")
+        try:
+            did = int(raw_id)
+        except (TypeError, ValueError):
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+        deal = store.get_deal(DB_PATH, did, session["tenant_id"])
+        if deal is None:
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>"))
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        form_locale = fields.get("form_locale", lang)
+        if form_locale not in i18n.SUPPORTED:
+            form_locale = lang
+        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
+        errors, parsed = validate_deal(lang, fields, form_locale)
+        if settings is None:
+            errors["commission"] = i18n.text(lang, "err_settings")
+        if errors:
+            # re-render edit with errors
+            values = {name: fields.get(name, "") for name in ("name", "commission", "share", "month", "stage", "agency")}
+            # build edit page again with errors
+            stages_html = "".join(
+                '<label><input type="radio" name="stage" value="%s"%s>%s</label>'
+                % (code, ' checked' if values.get("stage", "") == code else '', esc(i18n.text(lang, "st_" + code)))
+                for code in STAGES
+            )
+            body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
+                        '<h1 data-i18n="deal_title">%s</h1>'
+                        '<form method="post" action="/deals/update?id=%d">'
+                        '<input type="hidden" name="csrf_token" value="%s">'
+                        '<input type="hidden" name="form_locale" value="%s">'
+                        '<div><label for="deal-name" data-i18n="f_name">%s</label>'
+                        '<input id="deal-name" name="name" value="%s">%s</div>'
+                        '<div><label for="deal-commission" data-i18n="f_commission">%s</label>'
+                        '<input id="deal-commission" name="commission" value="%s">%s</div>'
+                        '<div><label for="deal-share" data-i18n="f_share">%s</label>'
+                        '<input id="deal-share" name="share" value="%s">%s</div>'
+                        '<div><label for="deal-month" data-i18n="f_month">%s</label>'
+                        '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
+                        '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
+                        '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
+                        '<input id="deal-agency" name="agency" value="%s">%s</div>'
+                        '<button type="submit" data-i18n="btn_confirm">%s</button>'
+                        "</form>"
+                        % (
+                            esc(i18n.text(lang, "deal_title")), did, esc(session["csrf"]), esc(lang),
+                            esc(i18n.text(lang, "f_name")), esc(values.get("name", "")), error_span(errors.get("name", "")),
+                            esc(i18n.text(lang, "f_commission")), esc(values.get("commission", "")), error_span(errors.get("commission", "")),
+                            esc(i18n.text(lang, "f_share")), esc(values.get("share", "")), error_span(errors.get("share", "")),
+                            esc(i18n.text(lang, "f_month")), esc(values.get("month", "")), error_span(errors.get("month", "")),
+                            esc(i18n.text(lang, "f_stage")), stages_html, error_span(errors.get("stage", "")),
+                            esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")), error_span(errors.get("agency", "")),
+                            esc(i18n.text(lang, "btn_confirm")),
+                        ), "/deals/edit")
+            return respond("200 OK", body)
+        share_cents = agent_share(parsed["commission_cents"], parsed["share_rate"])
+        store.update_deal(DB_PATH, did, session["tenant_id"], {
+            "name": parsed["name"],
+            "agency": parsed["agency"],
+            "month": parsed["month"],
+            "stage": parsed["stage"],
+            "agency_commission_cents": parsed["commission_cents"],
+            "share_rate": fields.get("share", ""),
+            "part_base": share_cents,
+            "share_rate_used": parsed["share_rate"],
+            "iva_rate": settings["iva_rate"],
+            "retencao_rate": settings["retencao_rate"],
+            "irs_rate": settings["irs_rate"],
+            "ss_rate": settings["ss_rate"],
+            "expenses_cents": settings["expenses_cents"],
+        })
         return redirect("/?month=" + parsed["month"])
 
     start_response("404 Not Found", [("Content-Length", str(len(b"Not found"))),
