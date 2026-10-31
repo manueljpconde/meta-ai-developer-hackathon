@@ -137,6 +137,8 @@ class AmbiguousSentenceTest(unittest.TestCase):
                                fake_interpret(result=clear_move()))
         self.assertEqual(outcome["status"], "question")
         self.assertIn("Benfica", outcome["question"])
+        self.assertIn("2026-11", outcome["question"])
+        self.assertIn("2026-12", outcome["question"])
 
 
 class UnknownReferenceTest(unittest.TestCase):
@@ -148,13 +150,24 @@ class UnknownReferenceTest(unittest.TestCase):
         self.assertEqual(outcome["status"], "question")
         self.assertIn("No Such Deal", outcome["question"])
 
-    def test_unknown_payment_asks_instead_of_guessing(self):
+    def test_unknown_payment_asks_naming_valid_payments(self):
+        records = example_records()
+        records.append(record("Benfica", "part-2", "2026-12", 500000))
+        move = {"deal": "Benfica", "payment": "part-9",
+                "target_month": TARGET}
+        outcome = plan_nl_move(SENTENCE, records, CURRENT,
+                               fake_interpret(result=move))
+        self.assertEqual(outcome["status"], "question")
+        self.assertIn("part-1", outcome["question"])
+        self.assertIn("part-2", outcome["question"])
+
+    def test_single_payment_uses_it_whatever_model_returned(self):
         move = {"deal": "Benfica", "payment": "part-9",
                 "target_month": TARGET}
         outcome = plan_nl_move(SENTENCE, example_records(), CURRENT,
                                fake_interpret(result=move))
-        self.assertEqual(outcome["status"], "question")
-        self.assertIn("part-9", outcome["question"])
+        self.assertEqual(outcome["status"], "moved")
+        self.assertEqual(outcome["moved"]["payment"], "part-1")
 
     def test_missing_month_asks_for_month(self):
         move = {"deal": "Benfica", "payment": "part-1"}
