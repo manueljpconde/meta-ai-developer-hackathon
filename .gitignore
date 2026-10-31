@@ -151,3 +151,7 @@ vite.config.ts.timestamp-*
 # Pasta pública montada por prototype/publicar.sh e ligação local à Vercel
 prototype/.publicar/
 .vercel/
+
+# Python cache
+__pycache__/
+*.py[cod]
