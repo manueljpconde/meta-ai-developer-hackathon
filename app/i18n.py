@@ -9,6 +9,7 @@ STRINGS = {
     "pt-PT": {
         "nav_home": "Previsão",
         "nav_new": "Novo negócio",
+        "nav_move": "Mover pagamento",
         "nav_settings": "Definições",
         "lang_label": "Idioma",
         "lang_change": "Mudar",
@@ -73,6 +74,7 @@ STRINGS = {
     "en-GB": {
         "nav_home": "Forecast",
         "nav_new": "New deal",
+        "nav_move": "Move payment",
         "nav_settings": "Settings",
         "lang_label": "Language",
         "lang_change": "Change",
