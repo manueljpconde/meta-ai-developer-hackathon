@@ -9,6 +9,7 @@ cascades to every row of that tenant in one transaction.
 """
 
 import sqlite3
+from datetime import datetime as _datetime
 
 from app import auth
 
@@ -34,6 +35,9 @@ CREATE TABLE IF NOT EXISTS deals (
     name TEXT NOT NULL,
     agency TEXT NOT NULL,
     month TEXT NOT NULL,
+    escritura_date TEXT NOT NULL,
+    cpcv_date TEXT,
+    fallen INTEGER NOT NULL DEFAULT 0,
     stage TEXT NOT NULL,
     agency_commission_cents INTEGER NOT NULL,
     share_rate TEXT NOT NULL,
@@ -90,6 +94,37 @@ def _parse_text(value):
         tzinfo=auth.timezone_utc())
 
 
+def _check_full_date(value, name):
+    """Validate a full calendar date, returning its forecast month."""
+    if not isinstance(value, str):
+        raise ValueError(name + " must be a date like YYYY-MM-DD")
+    try:
+        parsed = _datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(name + " must be a date like YYYY-MM-DD")
+    return "%04d-%02d" % (parsed.year, parsed.month)
+
+
+def _check_optional_date(value, name):
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError(name + " must be a date like YYYY-MM-DD")
+    try:
+        _datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(name + " must be a date like YYYY-MM-DD")
+    return value
+
+
+def _columns(conn, table):
+    try:
+        return [column[1] for column in
+                conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
+    except sqlite3.OperationalError:
+        return []
+
+
 def init_db(path):
     conn = _connect(path)
     try:
@@ -120,6 +155,28 @@ def migrate(path):
         except sqlite3.OperationalError:
             pass
         conn.executescript(SCHEMA)
+        columns = _columns(conn, "deals")
+        if "escritura_date" not in columns:
+            conn.execute(
+                "ALTER TABLE deals ADD COLUMN escritura_date TEXT")
+        if "cpcv_date" not in columns:
+            conn.execute("ALTER TABLE deals ADD COLUMN cpcv_date TEXT")
+        if "fallen" not in columns:
+            conn.execute(
+                "ALTER TABLE deals ADD COLUMN fallen INTEGER"
+                " NOT NULL DEFAULT 0")
+        try:
+            conn.execute(
+                "UPDATE deals SET escritura_date = month || '-01'"
+                " WHERE escritura_date IS NULL OR escritura_date = ''")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute(
+                "UPDATE deals SET fallen = 0"
+                " WHERE fallen IS NULL")
+        except sqlite3.OperationalError:
+            pass
         try:
             conn.execute(
                 "DELETE FROM settings WHERE tenant IS NULL"
@@ -128,8 +185,10 @@ def migrate(path):
             pass
         try:
             conn.execute(
-                "DELETE FROM deals WHERE tenant IS NULL"
-                " OR tenant NOT IN (SELECT id FROM tenants)")
+                "DELETE FROM deals"
+                " WHERE tenant IS NULL"
+                " OR tenant NOT IN (SELECT id FROM tenants)"
+                " OR escritura_date IS NULL OR escritura_date = ''")
         except sqlite3.OperationalError:
             pass
         conn.commit()
@@ -252,23 +311,64 @@ def get_settings(path, tenant=None):
     }
 
 
+def _row_to_deal(row):
+    keys = (
+        "id",
+        "name",
+        "agency",
+        "month",
+        "escritura_date",
+        "cpcv_date",
+        "fallen",
+        "stage",
+        "agency_commission_cents",
+        "share_rate",
+        "part_base",
+        "share_rate_used",
+        "iva_rate",
+        "retencao_rate",
+        "irs_rate",
+        "ss_rate",
+        "expenses_cents",
+        "idempotency_key",
+    )
+    deal = dict(zip(keys, row))
+    deal["fallen"] = bool(deal["fallen"])
+    return deal
+
+
+DEAL_COLUMNS = (
+    "id, name, agency, month, escritura_date, cpcv_date, fallen,"
+    " stage, agency_commission_cents, share_rate, part_base,"
+    " share_rate_used, iva_rate, retencao_rate, irs_rate,"
+    " ss_rate, expenses_cents, idempotency_key"
+)
+
+
 def insert_deal(path, deal, tenant=None):
     init_db(path)
     if tenant is None:
         raise ValueError("deals require a tenant")
+    month = _check_full_date(deal.get("escritura_date"), "escritura date")
+    cpcv = _check_optional_date(deal.get("cpcv_date"), "CPCV date")
+    fallen = 1 if deal.get("fallen") else 0
     conn = _connect(path)
     try:
         cursor = conn.execute(
-            "INSERT INTO deals (tenant, name, agency, month, stage,"
+            "INSERT INTO deals (tenant, name, agency, month,"
+            " escritura_date, cpcv_date, fallen, stage,"
             " agency_commission_cents, share_rate, part_base,"
             " share_rate_used, iva_rate, retencao_rate, irs_rate,"
             " ss_rate, expenses_cents, idempotency_key)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 tenant,
                 deal["name"],
                 deal["agency"],
-                deal["month"],
+                month,
+                deal["escritura_date"],
+                cpcv,
+                fallen,
                 deal["stage"],
                 deal["agency_commission_cents"],
                 deal["share_rate"],
@@ -314,9 +414,29 @@ def update_deal(path, ident, tenant=None, values=None):
     init_db(path)
     if tenant is None:
         raise ValueError("deals require a tenant")
-    allowed = {"name", "agency", "month", "stage"}
-    changes = {key: values.get(key) for key in allowed if values
-               and key in values and values.get(key) is not None}
+    allowed = {"name", "agency", "month", "stage", "escritura_date",
+               "cpcv_date", "fallen"}
+    changes = {}
+    if values:
+        for key in allowed:
+            if key not in values or values.get(key) is None:
+                continue
+            if key == "escritura_date":
+                _check_full_date(values[key], "escritura date")
+                changes[key] = values[key]
+                changes["month"] = _check_full_date(
+                    values[key], "escritura date")
+            elif key == "cpcv_date":
+                changes[key] = _check_optional_date(
+                    values[key], "CPCV date")
+            elif key == "fallen":
+                changes[key] = 1 if values[key] else 0
+            elif key == "month":
+                # The forecast month always derives from the
+                # escritura date; a bare month never changes a deal.
+                continue
+            else:
+                changes[key] = values[key]
     if not changes:
         return False
     conn = _connect(path)
@@ -332,65 +452,50 @@ def update_deal(path, ident, tenant=None, values=None):
         conn.close()
 
 
-def count_deals(path, tenant=None):
+def count_deals(path, tenant=None, include_fallen=False):
     init_db(path)
     if tenant is None:
         raise ValueError("deals require a tenant")
     conn = _connect(path)
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM deals WHERE tenant = ?",
-            (tenant,),
-        ).fetchone()
+        if include_fallen:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM deals WHERE tenant = ?",
+                (tenant,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM deals WHERE tenant = ?"
+                " AND fallen = 0",
+                (tenant,),
+            ).fetchone()
     finally:
         conn.close()
     return row[0]
 
 
-def list_deals(path, month=None, tenant=None):
+def list_deals(path, month=None, tenant=None, include_fallen=False):
     init_db(path)
     if tenant is None:
         raise ValueError("deals require a tenant")
+    fallen_clause = "" if include_fallen else " AND fallen = 0"
     conn = _connect(path)
     try:
         if month is None:
             rows = conn.execute(
-                "SELECT id, name, agency, month, stage,"
-                " agency_commission_cents, share_rate, part_base,"
-                " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-                " ss_rate, expenses_cents, idempotency_key"
-                " FROM deals WHERE tenant = ? ORDER BY id",
+                "SELECT %s FROM deals WHERE tenant = ?%s ORDER BY id"
+                % (DEAL_COLUMNS, fallen_clause),
                 (tenant,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, name, agency, month, stage,"
-                " agency_commission_cents, share_rate, part_base,"
-                " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-                " ss_rate, expenses_cents, idempotency_key"
-                " FROM deals WHERE tenant = ? AND month = ? ORDER BY id",
+                "SELECT %s FROM deals WHERE tenant = ? AND month = ?%s"
+                " ORDER BY id" % (DEAL_COLUMNS, fallen_clause),
                 (tenant, month),
             ).fetchall()
     finally:
         conn.close()
-    keys = (
-        "id",
-        "name",
-        "agency",
-        "month",
-        "stage",
-        "agency_commission_cents",
-        "share_rate",
-        "part_base",
-        "share_rate_used",
-        "iva_rate",
-        "retencao_rate",
-        "irs_rate",
-        "ss_rate",
-        "expenses_cents",
-        "idempotency_key",
-    )
-    return [dict(zip(keys, row)) for row in rows]
+    return [_row_to_deal(row) for row in rows]
 
 
 def months_with_deals(path, tenant=None):
@@ -400,7 +505,8 @@ def months_with_deals(path, tenant=None):
     conn = _connect(path)
     try:
         rows = conn.execute(
-            "SELECT DISTINCT month FROM deals WHERE tenant = ? ORDER BY month",
+            "SELECT DISTINCT month FROM deals"
+            " WHERE tenant = ? AND fallen = 0 ORDER BY month",
             (tenant,),
         ).fetchall()
     finally:

@@ -290,6 +290,29 @@ def nl_empty_notice(lang):
     )
 
 
+def format_full_date(year_month_day, lang):
+    year, month, day = year_month_day.split("-")
+    index = int(month) - 1
+    if lang == "pt-PT":
+        return "%d de %s de %s" % (int(day), PT_MONTHS[index], year)
+    return "%s %d, %s" % (EN_MONTHS[index], int(day), year)
+
+
+def valid_full_date(text):
+    if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])-"
+                        r"(0[1-9]|[12][0-9]|3[01])", text or ""):
+        return False
+    try:
+        datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    return True
+
+
+def month_of(escritura_date):
+    return escritura_date[:7]
+
+
 def valid_month(text):
     return bool(re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", text or ""))
 
@@ -653,6 +676,7 @@ def deal_form(lang, csrf, values, errors, settings):
             '<label><input type="radio" name="stage" value="%s"%s>%s</label>'
             % (code, checked, esc(i18n.text(lang, "st_" + code)))
         )
+    fallen_checked = ' checked' if values.get("fallen", "") else ''
     return (
         '<h1 data-i18n="deal_title">%s</h1>'
         '<form method="post" action="/deals/review">'
@@ -664,9 +688,15 @@ def deal_form(lang, csrf, values, errors, settings):
         '<input id="deal-commission" name="commission" value="%s">%s</div>'
         '<div><label for="deal-share" data-i18n="f_share">%s</label>'
         '<input id="deal-share" name="share" value="%s">%s</div>'
-        '<div><label for="deal-month" data-i18n="f_month">%s</label>'
-        '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
+        '<div><label for="deal-escritura" data-i18n="f_escritura">%s</label>'
+        '<input id="deal-escritura" type="date" name="escritura_date"'
+        ' value="%s">%s</div>'
+        '<div><label for="deal-cpcv" data-i18n="f_cpcv">%s</label>'
+        '<input id="deal-cpcv" type="date" name="cpcv_date" value="%s">%s</div>'
         '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
+        '<div><label for="deal-fallen" data-i18n="f_fallen">%s</label>'
+        '<input id="deal-fallen" type="checkbox" name="fallen" value="1"%s>'
+        '%s</div>'
         '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
         '<input id="deal-agency" name="agency" value="%s">%s</div>'
         '<button type="submit" data-i18n="btn_review">%s</button>'
@@ -680,13 +710,42 @@ def deal_form(lang, csrf, values, errors, settings):
             error_span(errors.get("commission", "")),
             esc(i18n.text(lang, "f_share")), esc(share_default),
             error_span(errors.get("share", "")),
-            esc(i18n.text(lang, "f_month")), esc(values.get("month", "")),
-            error_span(errors.get("month", "")),
+            esc(i18n.text(lang, "f_escritura")),
+            esc(values.get("escritura_date", "")),
+            error_span(errors.get("escritura_date", "")),
+            esc(i18n.text(lang, "f_cpcv")),
+            esc(values.get("cpcv_date", "")),
+            error_span(errors.get("cpcv_date", "")),
             esc(i18n.text(lang, "f_stage")), "".join(stages),
             error_span(errors.get("stage", "")),
+            esc(i18n.text(lang, "f_fallen")), fallen_checked,
+            error_span(errors.get("fallen", "")),
             esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")),
             error_span(errors.get("agency", "")),
             esc(i18n.text(lang, "btn_review")),
+        )
+    )
+
+
+def cpcv_suffix(lang, deal):
+    """Inline CPCV date shown beside a deal in the forecast list."""
+    if not deal.get("cpcv_date"):
+        return ""
+    return " · %s: %s" % (
+        esc(i18n.text(lang, "deal_cpcv")),
+        esc(format_full_date(deal["cpcv_date"], lang)),
+    )
+
+
+def cpcv_line(lang, deal):
+    """CPCV paragraph on the deal card; empty when unsigned."""
+    if not deal.get("cpcv_date"):
+        return ""
+    return (
+        '<p data-i18n="deal_cpcv">%s: %s</p>'
+        % (
+            esc(i18n.text(lang, "deal_cpcv")),
+            esc(format_full_date(deal["cpcv_date"], lang)),
         )
     )
 
@@ -731,8 +790,9 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
     hidden = "".join(
         '<input type="hidden" name="%s" value="%s">'
         % (name, hidden_value(fields.get(name, "")))
-        for name in ("name", "commission", "share", "month", "stage",
-                     "agency", "form_locale")
+        for name in ("name", "commission", "share", "escritura_date",
+                     "cpcv_date", "stage", "fallen", "agency",
+                     "form_locale")
     )
     shown = "".join(
         '<input type="hidden" name="shown_%s" value="%d">'
@@ -757,7 +817,8 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
         % (
             esc(i18n.text(lang, "rev_title")), notice,
             esc(fields.get("name", "")),
-            esc(format_month(fields.get("month", "2026-01"), lang)),
+            esc(format_full_date(
+                fields.get("escritura_date", "2026-01-01"), lang)),
             esc(i18n.text(lang, "st_" + fields.get("stage", "potencial"))
                 if fields.get("stage") in STAGES else ""),
             figures_list(lang, share_cents, result),
@@ -782,10 +843,11 @@ def forecast_section(lang, month, deals, expenses_cents):
         expenses_cents,
     )
     items = "".join(
-        "<li>%s · %s · %s</li>"
+        "<li>%s · %s · %s%s</li>"
         % (esc(deal["name"]),
            esc(i18n.text(lang, "st_" + deal["stage"])),
-           esc(format_amount(deal["part_base"], lang)))
+           esc(format_amount(deal["part_base"], lang)),
+           cpcv_suffix(lang, deal))
         for deal in deals
     )
     breakdown = result["protected_breakdown"]
@@ -1011,14 +1073,24 @@ def validate_deal(lang, fields, form_locale):
                 parsed["share_rate"] = rate_string(percent)
         except ValueError:
             errors["share"] = i18n.text(lang, "err_amount")
-    if not valid_month(fields.get("month", "")):
-        errors["month"] = i18n.text(lang, "err_month")
+    if not valid_full_date(fields.get("escritura_date", "")):
+        errors["escritura_date"] = i18n.text(lang, "err_escritura_date")
     else:
-        parsed["month"] = fields.get("month", "")
+        parsed["escritura_date"] = fields.get("escritura_date", "")
+        parsed["month"] = month_of(fields.get("escritura_date", ""))
+    cpcv_text = (fields.get("cpcv_date", "") or "").strip()
+    if cpcv_text:
+        if not valid_full_date(cpcv_text):
+            errors["cpcv_date"] = i18n.text(lang, "err_cpcv_date")
+        else:
+            parsed["cpcv_date"] = cpcv_text
+    else:
+        parsed["cpcv_date"] = None
     if fields.get("stage", "") not in STAGES:
         errors["stage"] = i18n.text(lang, "err_stage")
     else:
         parsed["stage"] = fields.get("stage", "")
+    parsed["fallen"] = bool(fields.get("fallen", ""))
     parsed["agency"] = fields.get("agency", "").strip()
     if len(parsed["agency"]) > MAX_TEXT_CHARS:
         errors["agency"] = i18n.text(lang, "err_too_long")
@@ -1505,8 +1577,8 @@ def application(environ, start_response):
             errors["commission"] = i18n.text(lang, "err_settings")
         if errors:
             values = {name: fields.get(name, "") for name in
-                      ("name", "commission", "share", "month", "stage",
-                       "agency")}
+                      ("name", "commission", "share", "escritura_date",
+                       "cpcv_date", "stage", "fallen", "agency")}
             body = page(
                 lang, session["csrf"], i18n.text(lang, "deal_title"),
                 '<p class="notice">%s</p>%s'
@@ -1524,8 +1596,10 @@ def application(environ, start_response):
             "name": parsed["name"],
             "commission": fields.get("commission", ""),
             "share": fields.get("share", ""),
-            "month": parsed["month"],
+            "escritura_date": parsed["escritura_date"],
+            "cpcv_date": parsed.get("cpcv_date") or "",
             "stage": parsed["stage"],
+            "fallen": "1" if parsed["fallen"] else "",
             "agency": parsed["agency"],
             "form_locale": form_locale,
         }
@@ -1539,8 +1613,9 @@ def application(environ, start_response):
         if not isinstance(fields, dict):
             return fields
         if "shown_share" in fields and "idempotency_key" in fields:
-            for name in ("name", "commission", "share", "month", "stage",
-                         "agency", "form_locale"):
+            for name in ("name", "commission", "share", "escritura_date",
+                         "cpcv_date", "stage", "fallen", "agency",
+                         "form_locale"):
                 fields[name] = unquote(fields.get(name, ""))
         if not csrf_ok(fields):
             return forbidden()
@@ -1553,8 +1628,8 @@ def application(environ, start_response):
             errors["commission"] = i18n.text(lang, "err_settings")
         if errors:
             values = {name: fields.get(name, "") for name in
-                      ("name", "commission", "share", "month", "stage",
-                       "agency")}
+                      ("name", "commission", "share", "escritura_date",
+                       "cpcv_date", "stage", "fallen", "agency")}
             body = page(
                 lang, session["csrf"], i18n.text(lang, "deal_title"),
                 deal_form(lang, session["csrf"], values, errors, settings))
@@ -1583,8 +1658,10 @@ def application(environ, start_response):
                 "name": parsed["name"],
                 "commission": fields.get("commission", ""),
                 "share": fields.get("share", ""),
-                "month": parsed["month"],
+                "escritura_date": parsed["escritura_date"],
+                "cpcv_date": parsed.get("cpcv_date") or "",
                 "stage": parsed["stage"],
+                "fallen": "1" if parsed["fallen"] else "",
                 "agency": parsed["agency"],
                 "form_locale": form_locale,
             }
@@ -1596,7 +1673,9 @@ def application(environ, start_response):
         store.insert_deal(DB_PATH, {
             "name": parsed["name"],
             "agency": parsed["agency"],
-            "month": parsed["month"],
+            "escritura_date": parsed["escritura_date"],
+            "cpcv_date": parsed.get("cpcv_date"),
+            "fallen": parsed["fallen"],
             "stage": parsed["stage"],
             "agency_commission_cents": parsed["commission_cents"],
             "share_rate": fields.get("share", ""),
@@ -1625,10 +1704,11 @@ def application(environ, start_response):
                 ("X-Content-Type-Options", "nosniff")])
             return [b"Not found"]
         body = page(lang, session["csrf"], esc(deal["name"]),
-                    "<h1>%s</h1><p>%s · %s</p>"
+                    "<h1>%s</h1><p>%s · %s</p>%s"
                     % (esc(deal["name"]),
-                       esc(format_month(deal["month"], lang)),
-                       esc(i18n.text(lang, "st_" + deal["stage"]))),
+                       esc(format_full_date(deal["escritura_date"], lang)),
+                       esc(i18n.text(lang, "st_" + deal["stage"])),
+                       cpcv_line(lang, deal)),
                     "/")
         return respond("200 OK", body)
 
