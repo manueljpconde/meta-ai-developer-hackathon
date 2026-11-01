@@ -258,6 +258,8 @@ fields always editable. Chosen (b): voice is fastest when one
 answer completes the update, while the editable card keeps full
 control for the cases a question cannot resolve.
 
+Item 4 voice (Nov 2026, on main after item 3c): hands-free conversation started by one Speak entry point on every signed-in page (fixed round button on phones, header at 1024 px), bottom panel with transcript/question/confirmation card and typed box, six-question limit or cancel stops with no save, deterministic missing-field questions in app code, single yes saves (voice or button), five updates plus stage/commission/reopen and estimated-date flag; language follows agent speech via muse-spark-1.3 language field.
+
 ## D6. Forecast, scenarios, and history keep their meaning
 
 Decision: the four figures with their breakdown, the three

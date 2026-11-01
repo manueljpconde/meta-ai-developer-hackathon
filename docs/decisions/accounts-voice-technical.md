@@ -184,6 +184,8 @@ enforcement with a page hint. Chosen (b): client hints differ by
 browser and cannot be trusted for cost control; the server refusal is
 the testable guard, the hint is courtesy.
 
+Item 4 voice (Nov 2026): browser encodes 16 kHz mono 16-bit WAV via Web Audio API (inline JS); transcription POST asr/transcribe multipart two parts (request audioEncoding WAV, audio audio/wav) at https://api.meta.ai/v1; WAV header validated and 60 s cap before model; extraction via /chat/completions muse-spark-1.3 strict JSON with intent update|question, language pt|en, 30 s timeout; speechSynthesis pt-PT/en-GB voices, no external scripts; audio deleted after request; 30/day and 6/conversation caps refused without model; estimated escritura flag stored and shown.
+
 ## T6. Transcription, extraction, the one question, confirmation
 
 Decision: extend the existing `engine/model_client.py` pattern, which
