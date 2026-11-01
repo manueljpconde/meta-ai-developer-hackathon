@@ -125,14 +125,13 @@ class EmptyStateGuidedFirstDealTest(AppTestCase):
     def test_empty_shows_new_deal_link_and_voice_hint(self):
         body = self.client.get("/").body
         self.assertIn("/deals/new", body)
-        self.assertIn("voice_hint", body)
+        self.assertNotIn("voice_hint", body)
         self.assertIn("home_empty", body)
     def test_voice_hint_in_both_languages(self):
+        # A0 forbids tips: empty page must not show a voice hint (removed per item 4c criterion 7)
         body_pt = self.client.get("/").body
-        self.assertIn("nota de voz", body_pt.lower())
-        self.set_language("en-GB")
-        body_en = self.client.get("/").body
-        self.assertIn("voice note", body_en.lower())
+        self.assertNotIn("voice_hint", body_pt)
+        self.assertNotIn("nota de voz", body_pt.lower())
 
 class CPCVDateTest(AppTestCase):
     def test_cpcv_records_shown_and_confirms(self):
@@ -399,7 +398,7 @@ class FullJourneyTest(AppTestCase):
         # Here we verify empty->settings refusal->deal form->review->confirm->forecast chain
         body = self.client.get("/").body
         self.assertIn("home_empty", body)
-        self.assertIn("voice_hint", body)
+        self.assertNotIn("voice_hint", body)
         # settings missing -> review should error with err_settings
         b = self.client.get("/deals/new").body
         # try review without settings

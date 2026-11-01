@@ -339,7 +339,7 @@ APP_ROUTES = [
     ("/deals/edit", "GET"), ("/deals/update", "POST"),
     ("/deals/delete", "GET"), ("/deals/delete", "POST"),
     ("/voice/transcribe", "POST"), ("/voice/turn", "POST"),
-    ("/voice/confirm", "POST"), ("/voice/cancel", "POST"),
+    ("/voice/extract", "POST"), ("/voice/confirm", "POST"), ("/voice/cancel", "POST"),
     ("/language", "POST"),
 ]
 
@@ -394,10 +394,10 @@ def page(lang, csrf, title, body, current="", signed_in=False):
                        '<div id="voiceTranscript" class="voice-transcript"></div><div id="voiceQuestion" class="voice-question"></div>'
                        '<div id="voiceReadback" class="voice-readback"></div>'
                        '<div class="voice-actions"><button type="button" id="voiceConfirmBtn" style="display:none" data-i18n="btn_confirm">%s</button><button type="button" id="voiceCancelBtn">%s</button></div>'
-                       '<form id="voiceTextForm" method="post" action="/voice/turn"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="conversation_id" id="voiceConvId" value=""><input type="text" name="text" id="voiceTextInput" placeholder="escreve..."><button type="submit">Enviar</button></form>'
+                       '<form id="voiceTextForm" method="post" action="/voice/extract"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="conversation_id" id="voiceConvId" value=""><input type="text" name="text" id="voiceTextInput" placeholder="escreve..."><button type="submit">Enviar</button></form>'
                        '<form id="voiceAudioForm" method="post" action="/voice/transcribe"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="audio_b64" id="voiceAudioB64" value=""><input type="hidden" name="conversation_id" id="voiceConvId2" value=""></form>'
                        '</div></div>' % (esc(i18n.text(lang, "btn_confirm")), esc(i18n.text(lang, "voice_cancelled")), esc(csrf), esc(csrf)))
-        voice_js = """<script>(function(){var ctx,aRec,aChunks=[];function speak(t,lg){try{if(!window.speechSynthesis)return;var u=new SpeechSynthesisUtterance(t);u.lang=lg.indexOf("pt")===0?"pt-PT":"en-GB";var vs=speechSynthesis.getVoices();for(var i=0;i<vs.length;i++)if(vs[i].lang===u.lang){u.voice=vs[i];break;}speechSynthesis.speak(u);}catch(e){}}function encWAV(buf){var l=buf.length,ab=new ArrayBuffer(44+l*2),v=new DataView(ab);function ws(s,o){for(var i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));}ws("RIFF",0);v.setUint32(4,36+l*2,true);ws("WAVE",8);ws("fmt ",12);v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);ws("data",36);v.setUint32(40,l*2,true);var idx=44;for(var i=0;i<l;i++){var sm=Math.max(-1,Math.min(1,buf[i]));v.setInt16(idx,sm<0?sm*0x8000:sm*0x7FFF,true);idx+=2;}return ab;}window.startVoice=function(){try{ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});}catch(e){return;}navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){var src=ctx.createMediaStreamSource(s);aRec=ctx.createScriptProcessor(4096,1,1);aChunks=[];src.connect(aRec);aRec.connect(ctx.destination);aRec.onaudioprocess=function(e){aChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));};document.getElementById("voicePanel").style.display="block";});};document.getElementById("voiceFalar").addEventListener("click",function(){window.startVoice();});document.getElementById("voiceFalarHeader").addEventListener("click",function(){window.startVoice();});window.voiceAsk=function(q,lg){var el=document.getElementById("voiceQuestion");el.textContent=q;document.getElementById("voicePanel").style.display="block";speak(q,lg);};})();</script>"""
+        voice_js = """<script>(function(){var ctx,aRec,aChunks=[];function speak(t,lg){try{if(!window.speechSynthesis)return;var u=new SpeechSynthesisUtterance(t);u.lang=lg.indexOf("pt")===0?"pt-PT":"en-GB";var vs=speechSynthesis.getVoices();for(var i=0;i<vs.length;i++)if(vs[i].lang===u.lang){u.voice=vs[i];break;}speechSynthesis.speak(u);}catch(e){}}function encWAV(buf){var l=buf.length,ab=new ArrayBuffer(44+l*2),v=new DataView(ab);function ws(s,o){for(var i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));}ws("RIFF",0);v.setUint32(4,36+l*2,true);ws("WAVE",8);ws("fmt ",12);v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);ws("data",36);v.setUint32(40,l*2,true);var idx=44;for(var i=0;i<l;i++){var sm=Math.max(-1,Math.min(1,buf[i]));v.setInt16(idx,sm<0?sm*0x8000:sm*0x7FFF,true);idx+=2;}return ab;}window.startVoice=function(){try{ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});}catch(e){return;}navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){var src=ctx.createMediaStreamSource(s);aRec=ctx.createScriptProcessor(4096,1,1);aChunks=[];src.connect(aRec);aRec.connect(ctx.destination);aRec.onaudioprocess=function(e){aChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));};document.getElementById("voicePanel").style.display="block";});};document.getElementById("voiceFalar").addEventListener("click",function(){document.getElementById("voicePanel").style.display="block";window.startVoice();});document.getElementById("voiceFalarHeader").addEventListener("click",function(){document.getElementById("voicePanel").style.display="block";window.startVoice();});document.getElementById("voiceConfirmBtn").addEventListener("click",function(){var c=document.getElementById("voiceConvId").value;var tok=document.querySelector("input[name=csrf_token]").value;fetch("/voice/confirm",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"csrf_token="+encodeURIComponent(tok)+"&conversation_id="+encodeURIComponent(c)}).then(function(){location.reload();});});document.getElementById("voiceCancelBtn").addEventListener("click",function(){var c=document.getElementById("voiceConvId").value;var tok=document.querySelector("input[name=csrf_token]").value;fetch("/voice/cancel",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"csrf_token="+encodeURIComponent(tok)+"&conversation_id="+encodeURIComponent(c)}).then(function(){location.reload();});});document.getElementById("voiceTextForm").addEventListener("submit",function(e){e.preventDefault();var f=new FormData(this);fetch("/voice/extract",{method:"POST",body:new URLSearchParams(f)}).then(function(r){return r.text();}).then(function(t){var d=document.createElement("div");d.innerHTML=t;var q=d.querySelector(".voice-question,.voice-readback");var tr=d.querySelector(".transcript");if(q)document.getElementById("voiceQuestion").innerHTML=q.innerHTML;if(tr)document.getElementById("voiceTranscript").innerHTML=tr.innerHTML;var conf=d.querySelector(".voice-confirm");if(conf)document.getElementById("voiceReadback").innerHTML=conf.innerHTML;var cid=d.querySelector("[data-conversation-id]");if(cid)document.getElementById("voiceConvId").value=cid.getAttribute("data-conversation-id");var lang=(d.querySelector("[lang]")||{}).getAttribute?d.querySelector("[lang]").getAttribute("lang"):"pt-PT";var qt=q?q.textContent:"";if(qt)speak(qt,lang);});});window.voiceAsk=function(q,lg){var el=document.getElementById("voiceQuestion");el.textContent=q;document.getElementById("voicePanel").style.display="block";speak(q,lg);};})();</script>"""
     if signed_in:
         header = '<div class="brand">Agentimo</div>%s%s%s%s' % (nav(lang, current), lang_switch(lang, csrf), signout_form(), voice_btn_header)
         body = body + voice_panel + voice_btn_fixed + voice_js
@@ -1136,11 +1136,9 @@ def application(environ, start_response):
                 '<h1 data-i18n="home_title">%s</h1>'
                 '<p data-i18n="home_empty">%s</p>'
                 '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
-                '<p class="notice" data-i18n="voice_hint">%s</p>'
                 % (esc(i18n.text(lang, "home_title")),
                    esc(i18n.text(lang, "home_empty")),
-                   esc(i18n.text(lang, "home_new")),
-                   esc(i18n.text(lang, "voice_hint"))),
+                   esc(i18n.text(lang, "home_new"))),
                 "/", signed_in=True,
             )
             return respond("200 OK", body)
@@ -1492,6 +1490,13 @@ def application(environ, start_response):
             return fields
         from app import voice_handlers as vh
         return vh.handle_transcribe(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, application.__module__ and __import__("app.web", fromlist=["forbidden"]))
+    if path == "/voice/extract" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        from app import voice_handlers as vh
+        import app.web as web_mod
+        return vh.handle_turn(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
     if path == "/voice/turn" and method == "POST":
         fields = read_post_form()
         if not isinstance(fields, dict):

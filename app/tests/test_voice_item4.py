@@ -51,7 +51,7 @@ class VoiceEntryPointTest(AppTestCase):
         body = self.client.get("/").body
         self.assertIn('id="voicePanel"', body)
         self.assertIn('id="voiceTextForm"', body)
-        self.assertIn('action="/voice/turn"', body)
+        self.assertIn('action="/voice/extract"', body)
         self.assertIn('action="/voice/transcribe"', body)
         self.assertIn('Confirmar', body)
 
