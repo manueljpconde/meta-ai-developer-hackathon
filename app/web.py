@@ -17,8 +17,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app import auth, i18n, mail, store
 from engine.calc import agent_share, calc_month
-from engine.model_client import API_KEY_ENV_VAR, MetaMoveClient, ModelError
-from engine.nl_move import plan_nl_move
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "agentimo.db"))
@@ -131,18 +129,8 @@ def format_month(year_month, lang):
     return "%s %s" % (EN_MONTHS[index], year)
 
 
-NL_SENTENCE_MAX_CHARS = 500
-
 NL_CURRENT_MONTH_ENV = "APP_NL_CURRENT_MONTH"
 
-
-def nl_client():
-    """Build the live interpretation client for one request."""
-    records = nl_records_from_deals(store.list_deals(DB_PATH))
-    from engine.model_client import build_interpret_context
-
-    return MetaMoveClient(context=build_interpret_context(
-        nl_current_month(), records))
 
 
 def nl_current_month():
@@ -167,23 +155,59 @@ def add_months(year_month, delta):
 
 
 
-def example_deal_months():
-    """Two months after current, kept for tests; Load example route is removed."""
-    current = nl_current_month()
-    return add_months(current, 1), add_months(current, 2)
-
-
-def nl_empty_notice(lang):
-    return (
-        '<p class="notice" role="alert" data-i18n="nl_empty">%s</p>'
-        '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
-        % (esc(i18n.text(lang, "nl_empty")),
-           esc(i18n.text(lang, "home_new")))
-    )
-
 
 def valid_month(text):
     return bool(re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", text or ""))
+
+def valid_date(text):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", text or ""):
+        return False
+    try:
+        datetime.strptime(text, "%Y-%m" + "-%d")
+        return True
+    except ValueError:
+        return False
+
+def forecast_month_from_date(escritura_date):
+    if escritura_date and len(escritura_date) >= 7:
+        return escritura_date[:7]
+    return escritura_date or ""
+
+def format_date(date_str, lang):
+    if not date_str:
+        return ""
+    try:
+        y, m, d = date_str.split("-")
+        idx = int(m) - 1
+        if lang == "pt-PT":
+            return f"{int(d):02d} de {PT_MONTHS[idx]} de {y}"
+        return f"{EN_MONTHS[idx]} {int(d)}, {y}"
+    except Exception:
+        return date_str
+
+def derive_month(escritura_date):
+    if escritura_date and len(escritura_date) >= 7:
+        return escritura_date[:7]
+    return escritura_date
+
+def date_selects(lang, prefix, value):
+    y, m, d = "", "", ""
+    if value and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        y, m, d = value.split("-")
+    # day 1..31
+    day_opts = '<option value=""></option>' + "".join(f'<option value="{i:02d}"{ " selected" if f"{i:02d}"==d else ""}>{i}</option>' for i in range(1,32))
+    month_names = PT_MONTHS if lang=="pt-PT" else EN_MONTHS
+    month_opts = '<option value=""></option>' + "".join(f'<option value="{i:02d}"{ " selected" if f"{i:02d}"==m else ""}>{month_names[i-1]}</option>' for i in range(1,13))
+    year_opts = '<option value=""></option>' + "".join(f'<option value="{yr}"{ " selected" if str(yr)==y else ""}>{yr}</option>' for yr in range(2020, 2035))
+    day_label = "dia" if lang == "pt-PT" else "day"
+    month_label = "m\u00eas" if lang == "pt-PT" else "month"
+    year_label = "ano" if lang == "pt-PT" else "year"
+    return (
+        f'<select name="{prefix}_day" aria-label="{day_label}">{day_opts}</select>'
+        f'<select name="{prefix}_month" aria-label="{month_label}">{month_opts}</select>'
+        f'<select name="{prefix}_year" aria-label="{year_label}">{year_opts}</select>'
+    )
+
 
 
 def month_figures(deals, expenses_cents):
@@ -314,7 +338,6 @@ APP_ROUTES = [
     ("/deals/confirm", "POST"),
     ("/deals/edit", "GET"), ("/deals/update", "POST"),
     ("/deals/delete", "GET"), ("/deals/delete", "POST"),
-    ("/scenarios/move", "GET"), ("/scenarios/move", "POST"),
     ("/language", "POST"),
 ]
 
@@ -347,7 +370,6 @@ def nav(lang, current=""):
     """The header navigation, marking the current page when known."""
     links = []
     for href, key in (("/", "nav_home"), ("/deals/new", "nav_new"),
-                      ("/scenarios/move", "nav_move"),
                       ("/settings", "nav_settings")):
         mark = ' aria-current="page"' if href == current else ""
         links.append('<a href="%s" data-i18n="%s"%s>%s</a>'
@@ -357,9 +379,9 @@ def nav(lang, current=""):
 
 def page(lang, csrf, title, body, current="", signed_in=False):
     if signed_in:
-        header = "%s%s" % (nav(lang, current), lang_switch(lang, csrf))
+        header = '<div class="brand">Agentimo</div>%s%s' % (nav(lang, current), lang_switch(lang, csrf))
     else:
-        header = lang_switch(lang, csrf)
+        header = '<div class="brand">Agentimo</div>%s' % lang_switch(lang, csrf)
     return (
         "<!DOCTYPE html>"
         '<html lang="%s"><head><meta charset="utf-8">'
@@ -482,9 +504,11 @@ def deal_form(lang, csrf, values, errors, settings):
             '<label><input type="radio" name="stage" value="%s"%s>%s</label>'
             % (code, checked, esc(i18n.text(lang, "st_" + code)))
         )
+    esc_val = values.get("escritura_date", "")
+    cpcv_val = values.get("cpcv_date", "")
     return (
         '<h1 data-i18n="deal_title">%s</h1>'
-        '<form method="post" action="/deals/review">'
+        '<form method="post" action="/deals/review" class="two-col">'
         '<input type="hidden" name="csrf_token" value="%s">'
         '<input type="hidden" name="form_locale" value="%s">'
         '<div><label for="deal-name" data-i18n="f_name">%s</label>'
@@ -493,8 +517,8 @@ def deal_form(lang, csrf, values, errors, settings):
         '<input id="deal-commission" name="commission" value="%s">%s</div>'
         '<div><label for="deal-share" data-i18n="f_share">%s</label>'
         '<input id="deal-share" name="share" value="%s">%s</div>'
-        '<div><label for="deal-month" data-i18n="f_month">%s</label>'
-        '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
+        '<fieldset><legend data-i18n="f_escritura">%s</legend>%s%s</fieldset>'
+        '<fieldset><legend data-i18n="f_cpcv">%s</legend>%s%s</fieldset>'
         '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
         '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
         '<input id="deal-agency" name="agency" value="%s">%s</div>'
@@ -509,8 +533,10 @@ def deal_form(lang, csrf, values, errors, settings):
             error_span(errors.get("commission", "")),
             esc(i18n.text(lang, "f_share")), esc(share_default),
             error_span(errors.get("share", "")),
-            esc(i18n.text(lang, "f_month")), esc(values.get("month", "")),
-            error_span(errors.get("month", "")),
+            esc(i18n.text(lang, "f_escritura")), date_selects(lang, "escritura_date", esc_val),
+            error_span(errors.get("escritura_date", "")),
+            esc(i18n.text(lang, "f_cpcv")), date_selects(lang, "cpcv_date", cpcv_val),
+            error_span(errors.get("cpcv_date", "")),
             esc(i18n.text(lang, "f_stage")), "".join(stages),
             error_span(errors.get("stage", "")),
             esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")),
@@ -560,7 +586,7 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
     hidden = "".join(
         '<input type="hidden" name="%s" value="%s">'
         % (name, hidden_value(fields.get(name, "")))
-        for name in ("name", "commission", "share", "month", "stage",
+        for name in ("name", "commission", "share", "escritura_date", "cpcv_date", "stage", "status",
                      "agency", "form_locale")
     )
     shown = "".join(
@@ -586,7 +612,7 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
         % (
             esc(i18n.text(lang, "rev_title")), notice,
             esc(fields.get("name", "")),
-            esc(format_month(fields.get("month", "2026-01"), lang)),
+            esc(format_date(fields.get("escritura_date", "2026-11-15"), lang) + " · " + format_month(forecast_month_from_date(fields.get("escritura_date", "2026-11-15")), lang)),
             esc(i18n.text(lang, "st_" + fields.get("stage", "potencial"))
                 if fields.get("stage") in STAGES else ""),
             figures_list(lang, share_cents, result),
@@ -610,13 +636,11 @@ def forecast_section(lang, month, deals, expenses_cents):
         ],
         expenses_cents,
     )
-    items = "".join(
-        '<li><a href="/deals/edit?id=%d">%s</a> · %s · %s</li>'
-        % (deal["id"], esc(deal["name"]),
-           esc(i18n.text(lang, "st_" + deal["stage"])),
-           esc(format_amount(deal["part_base"], lang)))
-        for deal in deals
-    )
+    def _deal_row(deal):
+        cpcv = esc(format_date(deal.get("cpcv_date",""), lang)) if deal.get("cpcv_date") else ""
+        escritura = esc(format_date(deal.get("escritura_date",""), lang))
+        return '<tr class="deal-row"><td><a href="/deals/edit?id=%d">%s</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (deal["id"], esc(deal["name"]), esc(i18n.text(lang, "st_" + deal["stage"])), esc(format_amount(deal["part_base"], lang)), escritura, cpcv)
+    rows = "".join(_deal_row(d) for d in deals)
     breakdown = result["protected_breakdown"]
     return (
         "<section><h2>%s</h2>"
@@ -626,7 +650,7 @@ def forecast_section(lang, month, deals, expenses_cents):
         '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
         '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
         "</dl>"
-        '<h3 data-i18n="m_deals">%s</h3><ul>%s</ul></section>'
+        '<h3 data-i18n="m_deals">%s</h3><table class="deal-table"><thead><tr><th>Name</th><th>Stage</th><th>Amount</th><th>Escritura date</th><th>CPCV date</th></tr></thead><tbody>%s</tbody></table></section>'
         % (
             esc(format_month(month, lang)),
             esc(i18n.text(lang, "m_commission")),
@@ -643,108 +667,10 @@ def forecast_section(lang, month, deals, expenses_cents):
             esc(format_amount(breakdown["ss_reserve"], lang)),
             esc(i18n.text(lang, "m_really")),
             esc(format_amount(result["really_available"], lang)),
-            esc(i18n.text(lang, "m_deals")), items,
+            esc(i18n.text(lang, "m_deals")), rows,
         )
     )
 
-
-def nl_sentence_form(lang, csrf, sentence=""):
-    """The one-sentence form starting a move scenario."""
-    simulating = i18n.text(lang, "nl_simulating")
-    head = (
-        '<form method="post" action="/scenarios/move">'
-        '<input type="hidden" name="csrf_token" value="%s">'
-        '<div><label for="nl-sentence" data-i18n="nl_label">%s</label>'
-        '<input id="nl-sentence" name="sentence" value="%s" maxlength="%d">'
-        "<p>%s</p></div>"
-        % (
-            esc(csrf),
-            esc(i18n.text(lang, "nl_label")),
-            esc(sentence),
-            NL_SENTENCE_MAX_CHARS,
-            esc(i18n.text(lang, "nl_hint")),
-        )
-    )
-    button = (
-        '<button type="submit" data-i18n="nl_submit" '
-        "onclick=\"this.disabled = true; "
-        "this.textContent = '" + simulating + "'; "
-        'this.form.submit(); return false;">'
-        + esc(i18n.text(lang, "nl_submit")) + "</button>"
-    )
-    return head + button + "</form>"
-
-
-def nl_month_lines(lang, month, figures_result):
-    """One month with its four figures, for the NL before/after view."""
-    breakdown = figures_result["protected_breakdown"]
-    return (
-        "<h2>%s</h2>"
-        "<dl>"
-        '<dt data-i18n="m_commission">%s</dt><dd>%s</dd>'
-        '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
-        '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
-        '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
-        "</dl>"
-        % (
-            esc(format_month(month, lang)),
-            esc(i18n.text(lang, "m_commission")),
-            esc(format_amount(figures_result["commission"], lang)),
-            esc(i18n.text(lang, "m_bank")),
-            esc(format_amount(figures_result["bank_inflow"], lang)),
-            esc(i18n.text(lang, "m_protected")),
-            esc(format_amount(figures_result["protected_money"], lang)),
-            esc(i18n.text(lang, "b_iva")),
-            esc(format_amount(breakdown["iva"], lang)),
-            esc(i18n.text(lang, "b_irs")),
-            esc(format_amount(breakdown["irs_reserve"], lang)),
-            esc(i18n.text(lang, "b_ss")),
-            esc(format_amount(breakdown["ss_reserve"], lang)),
-            esc(i18n.text(lang, "m_really")),
-            esc(format_amount(figures_result["really_available"], lang)),
-        )
-    )
-
-
-def nl_move_result_page(lang, sentence, outcome):
-    """Render one NL move outcome: before/after, question or error."""
-    status = outcome.get("status")
-    if status == "moved":
-        moved = outcome["moved"]
-        sections = "".join(
-            "<section>%s</section>"
-            % nl_month_lines(lang, month, outcome["after"][month])
-            for month in sorted(outcome["after"])
-        )
-        before = "".join(
-            "<section>%s</section>"
-            % nl_month_lines(lang, month, outcome["before"][month])
-            for month in sorted(outcome["before"])
-        )
-        return (
-            "<p>%s</p>"
-            "<h2>%s</h2>%s"
-            "<h2>%s</h2>%s"
-            % (
-                esc("%s · %s → %s" % (
-                    moved["deal"],
-                    format_month(moved["from_month"], lang),
-                    format_month(moved["target_month"], lang),
-                )),
-                esc(i18n.text(lang, "nl_before")),
-                before,
-                esc(i18n.text(lang, "nl_after")),
-                sections,
-            )
-        )
-    if status == "question":
-        return '<p class="notice" role="alert">%s</p>' % esc(
-            outcome["question"])
-    message = outcome.get("message") or ""
-    if API_KEY_ENV_VAR in message:
-        return '<p class="notice" role="alert">%s</p>' % esc(message)
-    return '<p class="notice" role="alert">%s</p>' % esc(
-        i18n.text(lang, "nl_no_connection"))
 
 def edit_form_html(lang, csrf, deal_id, values, errors):
     stages_html = "".join(
@@ -752,9 +678,16 @@ def edit_form_html(lang, csrf, deal_id, values, errors):
         % (code, ' checked' if values.get("stage", "") == code else '', esc(i18n.text(lang, "st_" + code)))
         for code in STAGES
     )
+    esc_val = values.get("escritura_date", "")
+    cpcv_val = values.get("cpcv_date", "")
+    status = values.get("status", "active")
+    status_opts = '<label><input type="radio" name="status" value="active"%s>%s</label><label><input type="radio" name="status" value="fallen"%s>%s</label>' % (
+        ' checked' if status != 'fallen' else '', esc(i18n.text(lang, "st_active")),
+        ' checked' if status == 'fallen' else '', esc(i18n.text(lang, "st_fallen")),
+    )
     return (
         '<h1 data-i18n="deal_edit_title">%s</h1>'
-        '<form method="post" action="/deals/update?id=%d">'
+        '<form method="post" action="/deals/update?id=%d" class="two-col">'
         '<input type="hidden" name="csrf_token" value="%s">'
         '<input type="hidden" name="form_locale" value="%s">'
         '<div><label for="deal-name" data-i18n="f_name">%s</label>'
@@ -763,8 +696,9 @@ def edit_form_html(lang, csrf, deal_id, values, errors):
         '<input id="deal-commission" name="commission" value="%s">%s</div>'
         '<div><label for="deal-share" data-i18n="f_share">%s</label>'
         '<input id="deal-share" name="share" value="%s">%s</div>'
-        '<div><label for="deal-month" data-i18n="f_month">%s</label>'
-        '<input id="deal-month" type="month" name="month" value="%s">%s</div>'
+        '<fieldset><legend data-i18n="f_escritura">%s</legend>%s%s</fieldset>'
+        '<fieldset><legend data-i18n="f_cpcv">%s</legend>%s%s</fieldset>'
+        '<fieldset><legend data-i18n="f_status">%s</legend>%s%s</fieldset>'
         '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
         '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
         '<input id="deal-agency" name="agency" value="%s">%s</div>'
@@ -776,41 +710,15 @@ def edit_form_html(lang, csrf, deal_id, values, errors):
             esc(i18n.text(lang, "f_name")), esc(values.get("name", "")), error_span(errors.get("name", "")),
             esc(i18n.text(lang, "f_commission")), esc(values.get("commission", "")), error_span(errors.get("commission", "")),
             esc(i18n.text(lang, "f_share")), esc(values.get("share", "")), error_span(errors.get("share", "")),
-            esc(i18n.text(lang, "f_month")), esc(values.get("month", "")), error_span(errors.get("month", "")),
+            esc(i18n.text(lang, "f_escritura")), date_selects(lang, "escritura_date", esc_val), error_span(errors.get("escritura_date", "")),
+            esc(i18n.text(lang, "f_cpcv")), date_selects(lang, "cpcv_date", cpcv_val), error_span(errors.get("cpcv_date", "")),
+            esc(i18n.text(lang, "f_status")), status_opts, error_span(errors.get("status", "")),
             esc(i18n.text(lang, "f_stage")), stages_html, error_span(errors.get("stage", "")),
             esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")), error_span(errors.get("agency", "")),
             esc(i18n.text(lang, "btn_confirm")),
             deal_id, esc(i18n.text(lang, "delete_deal_button")),
         )
     )
-
-
-def nl_records_from_deals(deals):
-    """Read stored deals as unpaid expected payment records.
-
-    Stored deals have no payment reference or received flag: each one
-    is one unpaid ``part-1`` payment, and the month comes from the
-    stored deal itself.
-    """
-    records = []
-    for deal in deals:
-        records.append({
-            "deal": deal["name"],
-            "payment": "part-1",
-            "month": deal["month"],
-            "part_base": deal["part_base"],
-            "received": False,
-            "iva_rate": deal["iva_rate"],
-            "retencao_rate": deal["retencao_rate"],
-            "irs_rate": deal["irs_rate"],
-            "ss_rate": deal["ss_rate"],
-        })
-    return records
-
-
-def _unused_interpret(sentence):
-    """Interpret stub that must never run: empty sentences ask first."""
-    raise AssertionError("the model must not be called for this sentence")
 
 
 def implausible_flags(lang, parsed):
@@ -828,15 +736,6 @@ def implausible_flags(lang, parsed):
     if comm is not None and 0 < comm < 10000:
         out["commission"] = i18n.text(lang, "err_small_commission")
     return out
-
-def validate_nl_sentence(sentence):
-    """Refuse an empty or overlong move sentence before any model call."""
-    if sentence is None or not sentence.strip():
-        return "empty"
-    if len(sentence) > NL_SENTENCE_MAX_CHARS:
-        return "too_long"
-    return ""
-
 
 def validate_deal(lang, fields, form_locale):
     errors = {}
@@ -875,14 +774,61 @@ def validate_deal(lang, fields, form_locale):
                 parsed["share_rate"] = rate_string(percent)
         except ValueError:
             errors["share"] = i18n.text(lang, "err_amount")
-    if not valid_month(fields.get("month", "")):
-        errors["month"] = i18n.text(lang, "err_month")
+    # escritura_date: build from selects or accept full date; month accepted as legacy alias
+    esc = fields.get("escritura_date", "")
+    if not esc:
+        y = fields.get("escritura_date_year", "").strip()
+        m = fields.get("escritura_date_month", "").strip()
+        d = fields.get("escritura_date_day", "").strip()
+        if y or m or d:
+            esc = f"{y}-{m}-{d}" if y and m and d else ""
+        elif fields.get("month", "").strip() and valid_month(fields.get("month", "").strip()):
+            esc = fields.get("month", "").strip() + "-01"
+    if not valid_date(esc):
+        errors["escritura_date"] = i18n.text(lang, "err_month")
     else:
-        parsed["month"] = fields.get("month", "")
-    if fields.get("stage", "") not in STAGES:
-        errors["stage"] = i18n.text(lang, "err_stage")
-    else:
-        parsed["stage"] = fields.get("stage", "")
+        parsed["escritura_date"] = esc
+        parsed["month"] = forecast_month_from_date(esc)
+    # cpcv_date: optional
+    cpcv = fields.get("cpcv_date", "")
+    if not cpcv:
+        y = fields.get("cpcv_date_year", "").strip()
+        m = fields.get("cpcv_date_month", "").strip()
+        d = fields.get("cpcv_date_day", "").strip()
+        if y and m and d:
+            cpcv = f"{y}-{m}-{d}"
+        elif y or m or d:
+            # partial -> invalid
+            cpcv = f"{y}-{m}-{d}"
+    if cpcv:
+        if not valid_date(cpcv):
+            errors["cpcv_date"] = i18n.text(lang, "err_month")
+        else:
+            parsed["cpcv_date"] = cpcv
+            parsed["stage"] = "confirmado"
+            if fields.get("stage", "") and fields.get("stage", "") not in STAGES:
+                pass
+            else:
+                parsed["stage"] = "confirmado"
+    # stage: if cpcv set, already confirmed; otherwise check
+    if "stage" not in parsed:
+        if fields.get("stage", "") not in STAGES:
+            errors["stage"] = i18n.text(lang, "err_stage")
+        else:
+            parsed["stage"] = fields.get("stage", "")
+    # status: fallen or active
+    status = fields.get("status", "active").strip() or "active"
+    if status not in ("active", "fallen"):
+        status = "active"
+    parsed["status"] = status
+    # cpcv defaults
+    if "cpcv_date" not in parsed:
+        parsed["cpcv_date"] = cpcv if cpcv and valid_date(cpcv) else None
+        if not parsed["cpcv_date"]:
+            # also check raw cpcv field if valid date passed directly
+            raw_c = fields.get("cpcv_date", "").strip()
+            if raw_c and valid_date(raw_c):
+                parsed["cpcv_date"] = raw_c
     parsed["agency"] = fields.get("agency", "").strip()
     if len(parsed["agency"]) > MAX_TEXT_CHARS:
         errors["agency"] = i18n.text(lang, "err_too_long")
@@ -1137,84 +1083,38 @@ def application(environ, start_response):
                 '<h1 data-i18n="home_title">%s</h1>'
                 '<p data-i18n="home_empty">%s</p>'
                 '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
+                '<p class="notice" data-i18n="voice_hint">%s</p>'
                 % (esc(i18n.text(lang, "home_title")),
                    esc(i18n.text(lang, "home_empty")),
-                   esc(i18n.text(lang, "home_new"))),
+                   esc(i18n.text(lang, "home_new")),
+                   esc(i18n.text(lang, "voice_hint"))),
                 "/", signed_in=True,
             )
             return respond("200 OK", body)
-        sections = "".join(
-            forecast_section(lang, month, store.list_deals(DB_PATH, month, tenant_id=session["tenant_id"]),
-                             expenses)
-            for month in months
-        )
-        body = page(lang, session["csrf"], i18n.text(lang, "home_title"),
-                    '<h1 data-i18n="home_title">%s</h1>%s'
-                    % (esc(i18n.text(lang, "home_title")), sections),
-                    "/", signed_in=True)
-        return respond("200 OK", body)
-
-    if path == "/scenarios/move" and method == "GET":
-        deals = store.list_deals(DB_PATH, tenant_id=session["tenant_id"])
-        notice = nl_empty_notice(lang) if not deals else ""
-        body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
-                    '<h1 data-i18n="move_title">%s</h1>'
-                    "%s%s"
-                    % (esc(i18n.text(lang, "move_title")),
-                       nl_sentence_form(lang, session["csrf"]),
-                       notice),
-                    "/scenarios/move", signed_in=True)
-        return respond("200 OK", body)
-
-    if path == "/scenarios/move" and method == "POST":
-        fields = read_post_form()
-        if not isinstance(fields, dict):
-            return fields
-        if not csrf_ok(fields):
-            return forbidden()
-        sentence = fields.get("sentence", "")
-        problem = validate_nl_sentence(sentence)
-        deals = store.list_deals(DB_PATH, tenant_id=session["tenant_id"])
-        request_lang = "pt" if lang == "pt-PT" else "en"
-        if problem == "empty":
-            outcome = plan_nl_move(
-                sentence, [], nl_current_month(), _unused_interpret,
-                lang=request_lang)
-        elif problem == "too_long":
-            outcome = {
-                "status": "question",
-                "question": i18n.text(lang, "err_too_long"),
-            }
-        elif not deals:
-            outcome = {
-                "status": "question",
-                "question": i18n.text(lang, "nl_empty"),
-            }
+        # Use active deals for forecast (exclude fallen) — never include fallen even if helper raises
+        active_deals = store.list_active_deals(DB_PATH, tenant_id=session["tenant_id"])
+        active_months = sorted(set(derive_month(d.get("escritura_date", "")) for d in active_deals if d.get("escritura_date")))
+        from collections import defaultdict as _dd
+        by_month = _dd(list)
+        for d in active_deals:
+            m = derive_month(d.get("escritura_date", ""))
+            by_month[m].append(d)
+        if active_months:
+            sections = "".join(
+                forecast_section(lang, m, by_month.get(m, []), expenses)
+                for m in sorted(active_months)
+            )
         else:
-            settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
-            expenses = settings["expenses_cents"] if settings else 0
-            records = nl_records_from_deals(deals)
-            try:
-                client = nl_client()
-            except ModelError as exc:
-                outcome = {"status": "error", "message": str(exc)}
-            else:
-                outcome = plan_nl_move(
-                    sentence, records, nl_current_month(),
-                    client.interpret_move, expenses_cents=expenses,
-                    lang=request_lang)
-                if outcome.get("status") == "error":
-                    if API_KEY_ENV_VAR in (outcome.get("message") or ""):
-                        outcome = {"status": "error",
-                                   "message": outcome["message"]}
-                    else:
-                        outcome = {"status": "error", "message": ""}
-        notice = nl_empty_notice(lang) if not deals else ""
-        content = (nl_sentence_form(lang, session["csrf"], sentence)
-                   + notice
-                   + nl_move_result_page(lang, sentence, outcome))
-        body = page(lang, session["csrf"], i18n.text(lang, "move_title"),
-                    content, "/scenarios/move", signed_in=True)
+            sections = ""
+        fallen_html = ""
+        fallen = store.list_fallen_deals(DB_PATH, session["tenant_id"])
+        if fallen:
+            items_f = "".join('<li><a href="/deals/edit?id=%d">%s</a> \u00b7 %s</li>' % (d["id"], esc(d["name"]), esc(i18n.text(lang, "st_fallen"))) for d in fallen)
+            fallen_html = '<details><summary data-i18n="fallen_title">%s (%d)</summary><ul>%s</ul></details>' % (esc(i18n.text(lang, "fallen_title")), len(fallen), items_f)
+        body = page(lang, session["csrf"], i18n.text(lang, "home_title"),
+                    '<h1 data-i18n="home_title">%s</h1><div class="forecast-grid">%s</div>%s'
+                    % (esc(i18n.text(lang, "home_title")), sections, fallen_html),
+                    "/", signed_in=True)
         return respond("200 OK", body)
 
     if path == "/language" and method == "POST":
@@ -1308,7 +1208,7 @@ def application(environ, start_response):
                     errors.update(flags)
         if errors:
             values = {name: fields.get(name, "") for name in
-                      ("name", "commission", "share", "month", "stage",
+                      ("name", "commission", "share", "stage",
                        "agency")}
             body = page(
                 lang, session["csrf"], i18n.text(lang, "deal_title"),
@@ -1327,8 +1227,11 @@ def application(environ, start_response):
             "name": parsed["name"],
             "commission": fields.get("commission", ""),
             "share": fields.get("share", ""),
+            "escritura_date": parsed.get("escritura_date", ""),
+            "cpcv_date": parsed.get("cpcv_date", "") or "",
             "month": parsed["month"],
             "stage": parsed["stage"],
+            "status": parsed.get("status", "active"),
             "agency": parsed["agency"],
             "form_locale": form_locale,
         }
@@ -1342,7 +1245,7 @@ def application(environ, start_response):
         if not isinstance(fields, dict):
             return fields
         if "shown_share" in fields and "idempotency_key" in fields:
-            for name in ("name", "commission", "share", "month", "stage",
+            for name in ("name", "commission", "share", "escritura_date", "cpcv_date", "stage", "status",
                          "agency", "form_locale"):
                 fields[name] = unquote(fields.get(name, ""))
         if not csrf_ok(fields):
@@ -1356,7 +1259,7 @@ def application(environ, start_response):
             errors["commission"] = i18n.text(lang, "err_settings")
         if errors:
             values = {name: fields.get(name, "") for name in
-                      ("name", "commission", "share", "month", "stage",
+                      ("name", "commission", "share", "stage",
                        "agency")}
             body = page(
                 lang, session["csrf"], i18n.text(lang, "deal_title"),
@@ -1386,8 +1289,11 @@ def application(environ, start_response):
                 "name": parsed["name"],
                 "commission": fields.get("commission", ""),
                 "share": fields.get("share", ""),
+                "escritura_date": parsed.get("escritura_date", ""),
+                "cpcv_date": parsed.get("cpcv_date","") or "",
                 "month": parsed["month"],
                 "stage": parsed["stage"],
+                "status": parsed.get("status","active"),
                 "agency": parsed["agency"],
                 "form_locale": form_locale,
             }
@@ -1399,8 +1305,11 @@ def application(environ, start_response):
         store.insert_deal(DB_PATH, {
             "name": parsed["name"],
             "agency": parsed["agency"],
+            "escritura_date": parsed.get("escritura_date", ""),
             "month": parsed["month"],
             "stage": parsed["stage"],
+            "status": parsed.get("status","active"),
+            "cpcv_date": parsed.get("cpcv_date"),
             "agency_commission_cents": parsed["commission_cents"],
             "share_rate": fields.get("share", ""),
             "part_base": share_cents,
@@ -1429,7 +1338,9 @@ def application(environ, start_response):
             "name": deal["name"],
             "commission": format_edit_amount(deal["agency_commission_cents"], lang),
             "share": format_edit_percent(deal["share_rate_used"], lang),
-            "month": deal["month"],
+            "escritura_date": deal.get("escritura_date", ""),
+            "cpcv_date": deal.get("cpcv_date") or "",
+            "status": deal.get("status","active"),
             "stage": deal["stage"],
             "agency": deal["agency"],
         }
@@ -1463,7 +1374,7 @@ def application(environ, start_response):
         if settings is None:
             errors["commission"] = i18n.text(lang, "err_settings")
         if errors:
-            values = {name: fields.get(name, "") for name in ("name", "commission", "share", "month", "stage", "agency")}
+            values = {name: fields.get(name, "") for name in ("name", "commission", "share", "stage", "agency")}
             body = page(lang, session["csrf"], i18n.text(lang, "deal_edit_title"),
                         edit_form_html(lang, session["csrf"], did, values, errors),
                         "/deals/edit", signed_in=True)
@@ -1472,8 +1383,11 @@ def application(environ, start_response):
         store.update_deal(DB_PATH, did, session["tenant_id"], {
             "name": parsed["name"],
             "agency": parsed["agency"],
+            "escritura_date": parsed.get("escritura_date", ""),
             "month": parsed["month"],
             "stage": parsed["stage"],
+            "status": parsed.get("status","active"),
+            "cpcv_date": parsed.get("cpcv_date"),
             "agency_commission_cents": parsed["commission_cents"],
             "share_rate": fields.get("share", ""),
             "part_base": share_cents,

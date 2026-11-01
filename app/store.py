@@ -30,8 +30,11 @@ CREATE TABLE IF NOT EXISTS deals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     agency TEXT NOT NULL,
+    escritura_date TEXT,
     month TEXT NOT NULL,
     stage TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    cpcv_date TEXT,
     agency_commission_cents INTEGER NOT NULL,
     share_rate TEXT NOT NULL,
     part_base INTEGER NOT NULL,
@@ -98,6 +101,24 @@ def init_db(path):
             # copy old rows (id, share_rate...) - old has no tenant_id
             conn.execute("INSERT INTO settings (id, share_rate, iva_rate, retencao_rate, irs_rate, ss_rate, expenses_cents) SELECT id, share_rate, iva_rate, retencao_rate, irs_rate, ss_rate, expenses_cents FROM settings_old")
             conn.execute("DROP TABLE settings_old")
+        # Deals migration: new columns for Item 3
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(deals)").fetchall()]
+        if "escritura_date" not in cols:
+            conn.execute("ALTER TABLE deals ADD COLUMN escritura_date TEXT")
+        if "cpcv_date" not in cols:
+            conn.execute("ALTER TABLE deals ADD COLUMN cpcv_date TEXT")
+        if "status" not in cols:
+            conn.execute("ALTER TABLE deals ADD COLUMN status TEXT DEFAULT 'active'")
+        try:
+            for did_, month_val, esc_val in conn.execute("SELECT id, month, escritura_date FROM deals").fetchall():
+                if not esc_val and month_val:
+                    conn.execute("UPDATE deals SET escritura_date = ? WHERE id = ?", (month_val + "-01", did_))
+                elif esc_val and month_val and esc_val[:7] != month_val:
+                    # Fix disagreement: escritura_date is source of truth
+                    conn.execute("UPDATE deals SET month = ? WHERE id = ?", (esc_val[:7], did_))
+            conn.execute("UPDATE deals SET status = 'active' WHERE status IS NULL OR status = ''")
+        except Exception:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -205,19 +226,24 @@ def insert_deal(path, deal, tenant_id=None):
     init_db(path)
     conn = _connect(path)
     try:
-        # deal may carry tenant_id; prefer explicit arg
         tid = tenant_id if tenant_id is not None else deal.get("tenant_id")
+        # Month is strictly derived from escritura_date; if escritura_date given, month must match its YYYY-MM
+        ed = deal.get("escritura_date") or (deal["month"] + "-01" if "month" in deal and deal.get("month") else "")
+        derived_month = ed[:7] if ed and len(ed) >= 7 else deal.get("month", "")
         cursor = conn.execute(
-            "INSERT INTO deals (name, agency, month, stage,"
+            "INSERT INTO deals (name, agency, escritura_date, month, stage, status, cpcv_date,"
             " agency_commission_cents, share_rate, part_base,"
             " share_rate_used, iva_rate, retencao_rate, irs_rate,"
             " ss_rate, expenses_cents, idempotency_key, tenant_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 deal["name"],
                 deal["agency"],
-                deal["month"],
+                ed,
+                derived_month,
                 deal["stage"],
+                deal.get("status", "active"),
+                deal.get("cpcv_date"),
                 deal["agency_commission_cents"],
                 deal["share_rate"],
                 deal["part_base"],
@@ -257,16 +283,21 @@ def update_deal(path, deal_id, tenant_id, fields):
     init_db(path)
     conn = _connect(path)
     try:
+        ed = fields.get("escritura_date") or (fields["month"] + "-01" if "month" in fields and fields.get("month") else "")
+        derived_month = ed[:7] if ed and len(ed) >= 7 else fields.get("month", "")
         cur = conn.execute(
-            "UPDATE deals SET name=?, agency=?, month=?, stage=?,"
+            "UPDATE deals SET name=?, agency=?, escritura_date=?, month=?, stage=?, status=?, cpcv_date=?,"
             " agency_commission_cents=?, share_rate=?, part_base=?,"
             " share_rate_used=?, iva_rate=?, retencao_rate=?, irs_rate=?,"
             " ss_rate=?, expenses_cents=? WHERE id=? AND tenant_id=?",
             (
                 fields["name"],
                 fields["agency"],
-                fields["month"],
+                ed,
+                derived_month,
                 fields["stage"],
+                fields.get("status", "active"),
+                fields.get("cpcv_date"),
                 fields["agency_commission_cents"],
                 fields["share_rate"],
                 fields["part_base"],
@@ -304,7 +335,7 @@ def list_deals(path, month=None, tenant_id=None):
         if tenant_id is not None:
             if month is None:
                 rows = conn.execute(
-                    "SELECT id, name, agency, month, stage,"
+                    "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
                     " ss_rate, expenses_cents, idempotency_key"
@@ -313,7 +344,7 @@ def list_deals(path, month=None, tenant_id=None):
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, name, agency, month, stage,"
+                    "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
                     " ss_rate, expenses_cents, idempotency_key"
@@ -323,7 +354,7 @@ def list_deals(path, month=None, tenant_id=None):
         else:
             if month is None:
                 rows = conn.execute(
-                    "SELECT id, name, agency, month, stage,"
+                    "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
                     " ss_rate, expenses_cents, idempotency_key"
@@ -331,7 +362,7 @@ def list_deals(path, month=None, tenant_id=None):
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, name, agency, month, stage,"
+                    "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
                     " ss_rate, expenses_cents, idempotency_key"
@@ -344,8 +375,11 @@ def list_deals(path, month=None, tenant_id=None):
         "id",
         "name",
         "agency",
+        "escritura_date",
         "month",
         "stage",
+        "status",
+        "cpcv_date",
         "agency_commission_cents",
         "share_rate",
         "part_base",
@@ -365,7 +399,7 @@ def get_deal(path, deal_id, tenant_id):
     conn = _connect(path)
     try:
         row = conn.execute(
-            "SELECT id, name, agency, month, stage,"
+            "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
             " agency_commission_cents, share_rate, part_base,"
             " share_rate_used, iva_rate, retencao_rate, irs_rate,"
             " ss_rate, expenses_cents, idempotency_key"
@@ -380,8 +414,11 @@ def get_deal(path, deal_id, tenant_id):
         "id",
         "name",
         "agency",
+        "escritura_date",
         "month",
         "stage",
+        "status",
+        "cpcv_date",
         "agency_commission_cents",
         "share_rate",
         "part_base",
@@ -404,6 +441,14 @@ def delete_deal(path, deal_id, tenant_id):
         return cur.rowcount > 0
     finally:
         conn.close()
+
+def list_active_deals(path, tenant_id):
+    """Active (non-fallen) deals for forecast; never includes fallen."""
+    return [d for d in list_deals(path, tenant_id=tenant_id) if d.get("status") != "fallen"]
+
+def list_fallen_deals(path, tenant_id):
+    """Fallen deals only, for collapsed list."""
+    return [d for d in list_deals(path, tenant_id=tenant_id) if d.get("status") == "fallen"]
 
 def months_with_deals(path, tenant_id=None):
     init_db(path)

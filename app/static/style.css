@@ -12,6 +12,8 @@
   --info-bg: #e4ecf5;
 }
 
+* { box-sizing: border-box; max-width: 100%; }
+
 body {
   font-family: Figtree, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   line-height: 1.5;
@@ -20,19 +22,74 @@ body {
   padding: 1rem;
   background: #f6f7f4;
   color: #16302c;
+  overflow-x: hidden;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid #e6ebe8;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+header .brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #16302c;
+  flex: 0 0 auto;
+}
+
+header nav {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.75rem;
+  flex: 1 1 auto;
+  white-space: nowrap;
 }
 
 header nav a {
-  margin-right: 1rem;
   color: #16302c;
+  text-decoration: none;
+  font-size: 0.9rem;
+  white-space: nowrap;
 }
 
-.lang {
-  margin-top: 0.5rem;
+header nav a[aria-current="page"] {
+  text-decoration: underline;
+  font-weight: 700;
+  text-underline-offset: 3px;
 }
 
-.lang select {
-  color: #5f6f6a;
+.lang--compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+  max-height: 44px;
+  overflow: hidden;
+}
+
+.lang--compact button {
+  font-size: 0.85rem;
+  width: auto;
+  min-height: auto;
+  height: 32px;
+  max-height: 44px;
+  padding: 0.2rem 0.5rem;
+  margin-top: 0;
+  background: transparent;
+  color: #16302c;
+  border: 1px solid transparent;
+}
+
+.lang--compact button.active {
+  font-weight: 700;
+  text-decoration: underline;
 }
 
 .error {
@@ -70,12 +127,29 @@ label {
   color: #5f6f6a;
 }
 
-input, select, button {
+input, select, button, textarea {
   font: inherit;
   margin-top: 0.25rem;
   width: 100%;
   min-height: 2.75rem;
   box-sizing: border-box;
+  max-width: 100%;
+}
+
+fieldset {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #e6ebe8;
+}
+
+fieldset select {
+  width: auto;
+  display: inline-block;
+  max-width: 32%;
 }
 
 button {
@@ -107,4 +181,55 @@ select:focus-visible {
   body {
     padding: 0.75rem;
   }
+}
+
+@media (max-width: 390px) {
+  header nav a {
+    font-size: 0.82rem;
+  }
+  fieldset {
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
+  }
+}
+/* Radio options: normal small radios inline with label, one per line at every width */
+fieldset label { display: block; }
+fieldset label input[type="radio"] { width: auto; min-height: auto; display: inline-block; vertical-align: middle; margin-right: 0.35rem; }
+
+/* Month cards as cards at every width (including phones) */
+.forecast-grid section {
+  border: 1px solid #e6ebe8;
+  padding: 0.75rem;
+  background: #fff;
+  margin-bottom: 0.75rem;
+}
+.forecast-grid dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+}
+/* Deal table: real table markup styled consistently */
+.deal-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+.deal-table th, .deal-table td {
+  padding: 0.4rem;
+  border-bottom: 1px solid #e6ebe8;
+  text-align: left;
+}
+
+/* Desktop layout from 1024px */
+@media (min-width: 1024px) {
+  body { max-width: 72rem; }
+  .forecast-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .forecast-grid section { margin-bottom: 0; }
+  form.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; }
+  form.two-col > div:has(> label) { grid-column: auto; }
+  form.two-col fieldset { grid-column: auto; }
+  form.two-col button[type="submit"] { grid-column: 1 / -1; }
+}
+@media (min-width: 1280px) {
+  .forecast-grid { grid-template-columns: repeat(3, 1fr); }
 }
