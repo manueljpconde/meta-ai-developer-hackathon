@@ -1450,6 +1450,7 @@ def application(environ, start_response):
             "irs_rate": settings["irs_rate"],
             "ss_rate": settings["ss_rate"],
             "expenses_cents": settings["expenses_cents"],
+            "escritura_estimada": 1 if fields.get("escritura_estimada") else 0,
         })
         return redirect("/?month=" + parsed["month"])
 

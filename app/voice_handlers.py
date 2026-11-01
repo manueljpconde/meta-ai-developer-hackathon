@@ -244,17 +244,11 @@ def _save_conv(conv, session, lang, page, respond, DB_PATH, store, i18n, web_mod
                     d2=ex.get("date") or ex.get("escritura_date") or deal["escritura_date"]
                     upd["escritura_date"]=d2
                     upd["month"]=d2[:7] if len(d2)>=7 else deal["month"]
-                    # handle estimated flag
+                    # handle estimated flag atomically with update
                     if ex.get("escritura_estimada"):
-                        import sqlite3
-                        store.update_deal(DB_PATH, deal["id"], tenant_id, upd)
-                        conn=sqlite3.connect(DB_PATH); conn.execute("UPDATE deals SET escritura_estimada=1 WHERE id=?", (deal["id"],)); conn.commit(); conn.close()
-                        kind="__done__"
+                        upd["escritura_estimada"]=1
                     else:
-                        import sqlite3
-                        store.update_deal(DB_PATH, deal["id"], tenant_id, upd)
-                        conn=sqlite3.connect(DB_PATH); conn.execute("UPDATE deals SET escritura_estimada=0 WHERE id=?", (deal["id"],)); conn.commit(); conn.close()
-                        kind="__done__"
+                        upd["escritura_estimada"]=0
                 elif kind=="fell_through":
                     upd["status"]="fallen"
                 elif kind=="change_stage":
@@ -281,7 +275,7 @@ def _save_conv(conv, session, lang, page, respond, DB_PATH, store, i18n, web_mod
                     upd["status"]="active"
                 if kind!="__done__":
                     # map keys expected by update_deal
-                    store.update_deal(DB_PATH, deal["id"], tenant_id, {"name": upd["name"], "agency": upd["agency"], "escritura_date": upd["escritura_date"], "month": upd["month"], "stage": upd["stage"], "status": upd.get("status","active"), "cpcv_date": upd.get("cpcv_date"), "agency_commission_cents": upd["agency_commission_cents"], "share_rate": upd["share_rate"], "part_base": upd["part_base"], "share_rate_used": upd["share_rate_used"], "iva_rate": upd["iva_rate"], "retencao_rate": upd["retencao_rate"], "irs_rate": upd["irs_rate"], "ss_rate": upd["ss_rate"], "expenses_cents": upd["expenses_cents"]})
+                    store.update_deal(DB_PATH, deal["id"], tenant_id, {"name": upd["name"], "agency": upd["agency"], "escritura_date": upd["escritura_date"], "month": upd["month"], "stage": upd["stage"], "status": upd.get("status","active"), "cpcv_date": upd.get("cpcv_date"), "agency_commission_cents": upd["agency_commission_cents"], "share_rate": upd["share_rate"], "part_base": upd["part_base"], "share_rate_used": upd["share_rate_used"], "iva_rate": upd["iva_rate"], "retencao_rate": upd["retencao_rate"], "irs_rate": upd["irs_rate"], "ss_rate": upd["ss_rate"], "expenses_cents": upd["expenses_cents"], "escritura_estimada": upd.get("escritura_estimada", deal.get("escritura_estimada",0))})
     except Exception:
         pass
     conv["state"]="ended"

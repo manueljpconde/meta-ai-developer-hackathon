@@ -264,6 +264,8 @@ def insert_deal(path, deal, tenant_id=None):
         # Month is strictly derived from escritura_date; if escritura_date given, month must match its YYYY-MM
         ed = deal.get("escritura_date") or (deal["month"] + "-01" if "month" in deal and deal.get("month") else "")
         derived_month = ed[:7] if ed and len(ed) >= 7 else deal.get("month", "")
+        if not ed or len(ed) < 7:
+            raise ValueError("escritura_date required for every deal")
         escritura_estimada = int(deal.get("escritura_estimada") or 0)
         cursor = conn.execute(
             "INSERT INTO deals (name, agency, escritura_date, month, stage, status, cpcv_date,"
