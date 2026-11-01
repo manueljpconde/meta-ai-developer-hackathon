@@ -636,10 +636,11 @@ def forecast_section(lang, month, deals, expenses_cents):
         ],
         expenses_cents,
     )
-    def _deal_line(deal):
-        cpcv = (" · CPCV %s" % esc(format_date(deal.get("cpcv_date",""), lang))) if deal.get("cpcv_date") else ""
-        return '<li><a href="/deals/edit?id=%d">%s</a> · %s · %s%s</li>' % (deal["id"], esc(deal["name"]), esc(i18n.text(lang, "st_" + deal["stage"])), esc(format_amount(deal["part_base"], lang)), cpcv)
-    items = "".join(_deal_line(d) for d in deals)
+    def _deal_row(deal):
+        cpcv = esc(format_date(deal.get("cpcv_date",""), lang)) if deal.get("cpcv_date") else ""
+        escritura = esc(format_date(deal.get("escritura_date",""), lang))
+        return '<tr class="deal-row"><td><a href="/deals/edit?id=%d">%s</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (deal["id"], esc(deal["name"]), esc(i18n.text(lang, "st_" + deal["stage"])), esc(format_amount(deal["part_base"], lang)), escritura, cpcv)
+    rows = "".join(_deal_row(d) for d in deals)
     breakdown = result["protected_breakdown"]
     return (
         "<section><h2>%s</h2>"
@@ -649,7 +650,7 @@ def forecast_section(lang, month, deals, expenses_cents):
         '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
         '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
         "</dl>"
-        '<h3 data-i18n="m_deals">%s</h3><ul>%s</ul></section>'
+        '<h3 data-i18n="m_deals">%s</h3><table class="deal-table"><thead><tr><th>Name</th><th>Stage</th><th>Amount</th><th>Escritura date</th><th>CPCV date</th></tr></thead><tbody>%s</tbody></table></section>'
         % (
             esc(format_month(month, lang)),
             esc(i18n.text(lang, "m_commission")),
@@ -666,7 +667,7 @@ def forecast_section(lang, month, deals, expenses_cents):
             esc(format_amount(breakdown["ss_reserve"], lang)),
             esc(i18n.text(lang, "m_really")),
             esc(format_amount(result["really_available"], lang)),
-            esc(i18n.text(lang, "m_deals")), items,
+            esc(i18n.text(lang, "m_deals")), rows,
         )
     )
 
