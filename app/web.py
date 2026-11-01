@@ -612,7 +612,7 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
         % (
             esc(i18n.text(lang, "rev_title")), notice,
             esc(fields.get("name", "")),
-            esc(format_date(fields.get("escritura_date", "2026-11-15"), lang)),
+            esc(format_date(fields.get("escritura_date", "2026-11-15"), lang) + " · " + format_month(forecast_month_from_date(fields.get("escritura_date", "2026-11-15")), lang)),
             esc(i18n.text(lang, "st_" + fields.get("stage", "potencial"))
                 if fields.get("stage") in STAGES else ""),
             figures_list(lang, share_cents, result),
