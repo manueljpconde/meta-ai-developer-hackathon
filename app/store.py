@@ -46,6 +46,18 @@ CREATE TABLE IF NOT EXISTS deals (
     expenses_cents INTEGER NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE
 );
+CREATE TABLE IF NOT EXISTS voice_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    created_at REAL NOT NULL,
+    transcript TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS voice_limits (
+    tenant_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, day)
+);
 CREATE TABLE IF NOT EXISTS login_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     token_hash TEXT NOT NULL UNIQUE,
@@ -117,6 +129,13 @@ def init_db(path):
                     # Fix disagreement: escritura_date is source of truth
                     conn.execute("UPDATE deals SET month = ? WHERE id = ?", (esc_val[:7], did_))
             conn.execute("UPDATE deals SET status = 'active' WHERE status IS NULL OR status = ''")
+        except Exception:
+            pass
+        # escritura_estimada flag (Item 4: estimated date)
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(deals)").fetchall()]
+            if "escritura_estimada" not in cols:
+                conn.execute("ALTER TABLE deals ADD COLUMN escritura_estimada INTEGER DEFAULT 0")
         except Exception:
             pass
         # Startup migration: delete every deal whose idempotency key starts with example-, for every tenant, exactly once
@@ -696,3 +715,51 @@ def record_email_ip(path, email, ip):
         pass
     finally:
         conn.close()
+
+def voice_day(today=None):
+    """Day string Europe/Lisbon for daily caps."""
+    import os as _os
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI, ZoneInfoNotFoundError as _ZNE
+    forced = _os.environ.get("APP_NL_CURRENT_MONTH", "")
+    # not used for day; just compute real day
+    try:
+        now = _dt.now(_ZI("Europe/Lisbon"))
+    except _ZNE:
+        now = _dt.now()
+    return now.strftime("%Y-%m-%d")
+
+def check_voice_limit(path, tenant_id, now=None):
+    """Return True if under 30/day, else False. Increments on success."""
+    import time as _t
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI, ZoneInfoNotFoundError as _ZNE
+    day = voice_day()
+    init_db(path)
+    conn = _connect(path)
+    try:
+        row = conn.execute("SELECT count FROM voice_limits WHERE tenant_id=? AND day=?", (tenant_id, day)).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO voice_limits (tenant_id, day, count) VALUES (?,?,1)", (tenant_id, day))
+            conn.commit()
+            return True
+        if row[0] >= 30:
+            return False
+        conn.execute("UPDATE voice_limits SET count=count+1 WHERE tenant_id=? AND day=?", (tenant_id, day))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def save_voice_transcript(path, tenant_id, transcript, now=None):
+    import time as _t
+    if now is None:
+        now = _t.time()
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute("INSERT INTO voice_conversations (tenant_id, created_at, transcript) VALUES (?,?,?)", (tenant_id, now, transcript))
+        conn.commit()
+    finally:
+        conn.close()
+
