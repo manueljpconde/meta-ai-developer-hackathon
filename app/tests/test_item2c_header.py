@@ -98,7 +98,7 @@ class CheckEmailPageTest(AppTestCase):
 
 class OneH1Test(AppTestCase):
     def test_every_page_has_exactly_one_h1(self):
-        paths = ['/', '/settings', '/deals/new', '/scenarios/move']
+        paths = ['/', '/settings', '/deals/new', '/settings']
         for p in paths:
             b = self.client.get(p).body
             count = b.lower().count('<h1')

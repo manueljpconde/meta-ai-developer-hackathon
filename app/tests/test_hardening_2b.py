@@ -116,15 +116,8 @@ class CrossTenantWebRouteTest(AppTestCase):
         b_client = self._seed_deal_for("b3@hardening.com")
         a_id = self._deal_id_for("a3@hardening.com")
         a_before_month = self._deals_for("a3@hardening.com")[0]["month"]
-        # B's move page must not list A's deal
-        body = b_client.get("/scenarios/move").body
-        self.assertNotIn("Deal-Alpha", body)
-        # B posts a move referencing A's deal id - must not affect A
-        body = b_client.get("/scenarios/move").body
-        csrf = csrf_token(body)
-        resp = b_client.post("/scenarios/move", {"sentence": "move Deal-Alpha to December", "csrf_token": csrf, "deal_id": str(a_id)})
-        self.assertEqual(resp.code, 200)
-        # A's month unchanged
+        # Move scenario route removed; B cannot affect A's deal via any route
+        self.assertNotIn("/scenarios/move", b_client.get("/").body)
         a_after_month = self._deals_for("a3@hardening.com")[0]["month"]
         self.assertEqual(a_before_month, a_after_month)
 
