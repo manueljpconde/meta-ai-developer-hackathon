@@ -138,6 +138,10 @@ def init_db(path):
                 conn.execute("ALTER TABLE deals ADD COLUMN escritura_estimada INTEGER DEFAULT 0")
         except Exception:
             pass
+        try:
+            conn.execute("UPDATE deals SET escritura_estimada=0 WHERE escritura_estimada IS NULL")
+        except Exception:
+            pass
         # Startup migration: delete every deal whose idempotency key starts with example-, for every tenant, exactly once
         try:
             if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'").fetchone() is None:
@@ -260,12 +264,13 @@ def insert_deal(path, deal, tenant_id=None):
         # Month is strictly derived from escritura_date; if escritura_date given, month must match its YYYY-MM
         ed = deal.get("escritura_date") or (deal["month"] + "-01" if "month" in deal and deal.get("month") else "")
         derived_month = ed[:7] if ed and len(ed) >= 7 else deal.get("month", "")
+        escritura_estimada = int(deal.get("escritura_estimada") or 0)
         cursor = conn.execute(
             "INSERT INTO deals (name, agency, escritura_date, month, stage, status, cpcv_date,"
             " agency_commission_cents, share_rate, part_base,"
             " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-            " ss_rate, expenses_cents, idempotency_key, tenant_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ss_rate, expenses_cents, idempotency_key, tenant_id, escritura_estimada)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 deal["name"],
                 deal["agency"],
@@ -285,6 +290,7 @@ def insert_deal(path, deal, tenant_id=None):
                 deal["expenses_cents"],
                 deal["idempotency_key"],
                 tid,
+                escritura_estimada,
             ),
         )
         conn.commit()
@@ -319,7 +325,7 @@ def update_deal(path, deal_id, tenant_id, fields):
             "UPDATE deals SET name=?, agency=?, escritura_date=?, month=?, stage=?, status=?, cpcv_date=?,"
             " agency_commission_cents=?, share_rate=?, part_base=?,"
             " share_rate_used=?, iva_rate=?, retencao_rate=?, irs_rate=?,"
-            " ss_rate=?, expenses_cents=? WHERE id=? AND tenant_id=?",
+            " ss_rate=?, expenses_cents=?, escritura_estimada=? WHERE id=? AND tenant_id=?",
             (
                 fields["name"],
                 fields["agency"],
@@ -337,6 +343,7 @@ def update_deal(path, deal_id, tenant_id, fields):
                 fields["irs_rate"],
                 fields["ss_rate"],
                 fields["expenses_cents"],
+                int(fields.get("escritura_estimada") or 0),
                 deal_id,
                 tenant_id,
             ),
@@ -368,7 +375,7 @@ def list_deals(path, month=None, tenant_id=None):
                     "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-                    " ss_rate, expenses_cents, idempotency_key"
+                    " ss_rate, expenses_cents, idempotency_key, escritura_estimada"
                     " FROM deals WHERE tenant_id = ? ORDER BY id",
                     (tenant_id,),
                 ).fetchall()
@@ -377,7 +384,7 @@ def list_deals(path, month=None, tenant_id=None):
                     "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-                    " ss_rate, expenses_cents, idempotency_key"
+                    " ss_rate, expenses_cents, idempotency_key, escritura_estimada"
                     " FROM deals WHERE tenant_id = ? AND month = ? ORDER BY id",
                     (tenant_id, month),
                 ).fetchall()
@@ -387,7 +394,7 @@ def list_deals(path, month=None, tenant_id=None):
                     "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-                    " ss_rate, expenses_cents, idempotency_key"
+                    " ss_rate, expenses_cents, idempotency_key, escritura_estimada"
                     " FROM deals ORDER BY id"
                 ).fetchall()
             else:
@@ -395,7 +402,7 @@ def list_deals(path, month=None, tenant_id=None):
                     "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
                     " agency_commission_cents, share_rate, part_base,"
                     " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-                    " ss_rate, expenses_cents, idempotency_key"
+                    " ss_rate, expenses_cents, idempotency_key, escritura_estimada"
                     " FROM deals WHERE month = ? ORDER BY id",
                     (month,),
                 ).fetchall()
@@ -420,6 +427,7 @@ def list_deals(path, month=None, tenant_id=None):
         "ss_rate",
         "expenses_cents",
         "idempotency_key",
+        "escritura_estimada",
     )
     return [dict(zip(keys, row)) for row in rows]
 
@@ -432,7 +440,7 @@ def get_deal(path, deal_id, tenant_id):
             "SELECT id, name, agency, escritura_date, month, stage, status, cpcv_date,"
             " agency_commission_cents, share_rate, part_base,"
             " share_rate_used, iva_rate, retencao_rate, irs_rate,"
-            " ss_rate, expenses_cents, idempotency_key"
+            " ss_rate, expenses_cents, idempotency_key, escritura_estimada"
             " FROM deals WHERE id = ? AND tenant_id = ?",
             (deal_id, tenant_id),
         ).fetchone()
@@ -459,6 +467,7 @@ def get_deal(path, deal_id, tenant_id):
         "ss_rate",
         "expenses_cents",
         "idempotency_key",
+        "escritura_estimada",
     )
     return dict(zip(keys, row))
 
