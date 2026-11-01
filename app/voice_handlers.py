@@ -279,7 +279,15 @@ def _save_conv(conv, session, lang, page, respond, DB_PATH, store, i18n, web_mod
     except Exception:
         pass
     conv["state"]="ended"
-    return web_mod.redirect("/")
+    # use the web_mod if it has redirect (injected by caller), else use the respond-based redirect
+    try:
+        if hasattr(web_mod, "redirect"):
+            return web_mod.redirect("/")
+    except Exception:
+        pass
+    # fallback: construct redirect manually via respond's closure — web.py passes a real redirect
+    # so we build a 303 using the captured respond if available
+    return respond("303 See Other", "", [("Location", "/")])
 
 def handle_wav_check(data):
     from app.voice import validate_wav
