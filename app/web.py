@@ -338,6 +338,8 @@ APP_ROUTES = [
     ("/deals/confirm", "POST"),
     ("/deals/edit", "GET"), ("/deals/update", "POST"),
     ("/deals/delete", "GET"), ("/deals/delete", "POST"),
+    ("/voice/transcribe", "POST"), ("/voice/turn", "POST"),
+    ("/voice/confirm", "POST"), ("/voice/cancel", "POST"),
     ("/language", "POST"),
 ]
 
@@ -383,8 +385,22 @@ def page(lang, csrf, title, body, current="", signed_in=False):
                 '<input type="hidden" name="csrf_token" value="%s">'
                 '<button type="submit" data-i18n="signout_label">%s</button>'
                 '</form>' % (esc(csrf), esc(i18n.text(lang, "signout_label"))))
+    voice_btn_header = '<button id="voiceFalarHeader" type="button" data-i18n="voice_falar" class="voice-falar-header">\u00f0\u009f\u008e\u0099 %s</button>' % esc(i18n.text(lang, "voice_falar"))
+    voice_btn_fixed = '<button id="voiceFalar" type="button" data-i18n="voice_falar" class="voice-falar-fixed" aria-label="%s">%s</button>' % (esc(i18n.text(lang, "voice_falar")), esc(i18n.text(lang, "voice_falar")))
+    voice_panel = ""
+    voice_js = ""
     if signed_in:
-        header = '<div class="brand">Agentimo</div>%s%s%s' % (nav(lang, current), lang_switch(lang, csrf), signout_form())
+        voice_panel = ('<div id="voicePanel" class="voice-panel" style="display:none"><div class="voice-panel__inner">'
+                       '<div id="voiceTranscript" class="voice-transcript"></div><div id="voiceQuestion" class="voice-question"></div>'
+                       '<div id="voiceReadback" class="voice-readback"></div>'
+                       '<div class="voice-actions"><button type="button" id="voiceConfirmBtn" style="display:none" data-i18n="btn_confirm">%s</button><button type="button" id="voiceCancelBtn">%s</button></div>'
+                       '<form id="voiceTextForm" method="post" action="/voice/turn"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="conversation_id" id="voiceConvId" value=""><input type="text" name="text" id="voiceTextInput" placeholder="escreve..."><button type="submit">Enviar</button></form>'
+                       '<form id="voiceAudioForm" method="post" action="/voice/transcribe"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="audio_b64" id="voiceAudioB64" value=""><input type="hidden" name="conversation_id" id="voiceConvId2" value=""></form>'
+                       '</div></div>' % (esc(i18n.text(lang, "btn_confirm")), esc(i18n.text(lang, "voice_cancelled")), esc(csrf), esc(csrf)))
+        voice_js = """<script>(function(){var ctx,aRec,aChunks=[];function speak(t,lg){try{if(!window.speechSynthesis)return;var u=new SpeechSynthesisUtterance(t);u.lang=lg.indexOf("pt")===0?"pt-PT":"en-GB";var vs=speechSynthesis.getVoices();for(var i=0;i<vs.length;i++)if(vs[i].lang===u.lang){u.voice=vs[i];break;}speechSynthesis.speak(u);}catch(e){}}function encWAV(buf){var l=buf.length,ab=new ArrayBuffer(44+l*2),v=new DataView(ab);function ws(s,o){for(var i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));}ws("RIFF",0);v.setUint32(4,36+l*2,true);ws("WAVE",8);ws("fmt ",12);v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);ws("data",36);v.setUint32(40,l*2,true);var idx=44;for(var i=0;i<l;i++){var sm=Math.max(-1,Math.min(1,buf[i]));v.setInt16(idx,sm<0?sm*0x8000:sm*0x7FFF,true);idx+=2;}return ab;}window.startVoice=function(){try{ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});}catch(e){return;}navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){var src=ctx.createMediaStreamSource(s);aRec=ctx.createScriptProcessor(4096,1,1);aChunks=[];src.connect(aRec);aRec.connect(ctx.destination);aRec.onaudioprocess=function(e){aChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));};document.getElementById("voicePanel").style.display="block";});};document.getElementById("voiceFalar").addEventListener("click",function(){window.startVoice();});document.getElementById("voiceFalarHeader").addEventListener("click",function(){window.startVoice();});window.voiceAsk=function(q,lg){var el=document.getElementById("voiceQuestion");el.textContent=q;document.getElementById("voicePanel").style.display="block";speak(q,lg);};})();</script>"""
+    if signed_in:
+        header = '<div class="brand">Agentimo</div>%s%s%s%s' % (nav(lang, current), lang_switch(lang, csrf), signout_form(), voice_btn_header)
+        body = body + voice_panel + voice_btn_fixed + voice_js
     else:
         header = '<div class="brand">Agentimo</div>%s' % lang_switch(lang, csrf)
     return (
@@ -525,6 +541,7 @@ def deal_form(lang, csrf, values, errors, settings):
         '<fieldset><legend data-i18n="f_escritura">%s</legend>%s%s</fieldset>'
         '<fieldset><legend data-i18n="f_cpcv">%s</legend>%s%s</fieldset>'
         '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
+        '<div><label><input type="checkbox" name="escritura_estimada" value="1"%s> %s</label></div>'
         '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
         '<input id="deal-agency" name="agency" value="%s">%s</div>'
         '<button type="submit" data-i18n="btn_review">%s</button>'
@@ -544,6 +561,7 @@ def deal_form(lang, csrf, values, errors, settings):
             error_span(errors.get("cpcv_date", "")),
             esc(i18n.text(lang, "f_stage")), "".join(stages),
             error_span(errors.get("stage", "")),
+            ' checked' if values.get("escritura_estimada") else '', esc(i18n.text(lang, "f_estimada")),
             esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")),
             error_span(errors.get("agency", "")),
             esc(i18n.text(lang, "btn_review")),
@@ -643,12 +661,18 @@ def forecast_section(lang, month, deals, expenses_cents):
     )
     def _deal_row(deal):
         cpcv = esc(format_date(deal.get("cpcv_date",""), lang)) if deal.get("cpcv_date") else ""
-        escritura = esc(format_date(deal.get("escritura_date",""), lang))
+        ed = esc(format_date(deal.get("escritura_date",""), lang))
+        if deal.get("escritura_estimada"):
+            ed = ed + " " + esc(i18n.text(lang, "voice_estimada"))
+        escritura = ed
         return '<tr class="deal-row"><td><a href="/deals/edit?id=%d">%s</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (deal["id"], esc(deal["name"]), esc(i18n.text(lang, "st_" + deal["stage"])), esc(format_amount(deal["part_base"], lang)), escritura, cpcv)
     rows = "".join(_deal_row(d) for d in deals)
     def _card(deal):
         cpcv = esc(format_date(deal.get("cpcv_date",""), lang)) if deal.get("cpcv_date") else ""
-        escritura = esc(format_date(deal.get("escritura_date",""), lang))
+        ed = esc(format_date(deal.get("escritura_date",""), lang))
+        if deal.get("escritura_estimada"):
+            ed = ed + " " + esc(i18n.text(lang, "voice_estimada"))
+        escritura = ed
         return ('<article class="deal-card">'
                 '<a href="/deals/edit?id=%d">%s</a>'
                 '<span class="deal-card__label" data-i18n="card_name">%s</span><span>%s</span>'
@@ -727,6 +751,7 @@ def edit_form_html(lang, csrf, deal_id, values, errors):
         '<fieldset><legend data-i18n="f_cpcv">%s</legend>%s%s</fieldset>'
         '<fieldset><legend data-i18n="f_status">%s</legend>%s%s</fieldset>'
         '<fieldset><legend data-i18n="f_stage">%s</legend>%s%s</fieldset>'
+        '<div><label><input type="checkbox" name="escritura_estimada" value="1"%s> %s</label></div>'
         '<div><label for="deal-agency" data-i18n="f_agency">%s</label>'
         '<input id="deal-agency" name="agency" value="%s">%s</div>'
         '<button type="submit" data-i18n="btn_confirm">%s</button>'
@@ -741,6 +766,7 @@ def edit_form_html(lang, csrf, deal_id, values, errors):
             esc(i18n.text(lang, "f_cpcv")), date_selects(lang, "cpcv_date", cpcv_val), error_span(errors.get("cpcv_date", "")),
             esc(i18n.text(lang, "f_status")), status_opts, error_span(errors.get("status", "")),
             esc(i18n.text(lang, "f_stage")), stages_html, error_span(errors.get("stage", "")),
+            ' checked' if values.get("escritura_estimada") else '', esc(i18n.text(lang, "f_estimada")),
             esc(i18n.text(lang, "f_agency")), esc(values.get("agency", "")), error_span(errors.get("agency", "")),
             esc(i18n.text(lang, "btn_confirm")),
             deal_id, esc(i18n.text(lang, "delete_deal_button")),
@@ -1458,6 +1484,34 @@ def application(environ, start_response):
             return forbidden()
         store.delete_deal(DB_PATH, did, session["tenant_id"])
         return redirect("/")
+
+    if path == "/voice/transcribe" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        from app import voice_handlers as vh
+        return vh.handle_transcribe(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, application.__module__ and __import__("app.web", fromlist=["forbidden"]))
+    if path == "/voice/turn" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        from app import voice_handlers as vh
+        import app.web as web_mod
+        return vh.handle_turn(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
+    if path == "/voice/confirm" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        from app import voice_handlers as vh
+        import app.web as web_mod
+        return vh.handle_confirm(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
+    if path == "/voice/cancel" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        from app import voice_handlers as vh
+        import app.web as web_mod
+        return vh.handle_cancel(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
 
     start_response("404 Not Found", [("Content-Length", str(len(b"Not found"))),
                                      ("Content-Security-Policy",
