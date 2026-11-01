@@ -192,3 +192,22 @@ select:focus-visible {
     padding-right: 0.25rem;
   }
 }
+/* Radio options: normal small radios inline with label, one per line at every width */
+fieldset label { display: block; }
+fieldset label input[type="radio"] { width: auto; min-height: auto; display: inline-block; vertical-align: middle; margin-right: 0.35rem; }
+
+/* Desktop layout from 1024px */
+@media (min-width: 1024px) {
+  body { max-width: 72rem; }
+  .forecast-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .forecast-grid section { border: 1px solid #e6ebe8; padding: 0.75rem; }
+  .forecast-grid dl { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; }
+  .deal-table { display: table; width: 100%; border-collapse: collapse; }
+  .deal-table .deal-row { display: table-row; }
+  .deal-table .deal-row > * { display: table-cell; padding: 0.4rem; border-bottom: 1px solid #e6ebe8; }
+  form.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; }
+  form.two-col fieldset, form.two-col div:has(> button) { grid-column: 1 / -1; }
+}
+.forecast-grid {}
+.deal-table {}
+

@@ -113,6 +113,9 @@ def init_db(path):
             for did_, month_val, esc_val in conn.execute("SELECT id, month, escritura_date FROM deals").fetchall():
                 if not esc_val and month_val:
                     conn.execute("UPDATE deals SET escritura_date = ? WHERE id = ?", (month_val + "-01", did_))
+                elif esc_val and month_val and esc_val[:7] != month_val:
+                    # Fix disagreement: escritura_date is source of truth
+                    conn.execute("UPDATE deals SET month = ? WHERE id = ?", (esc_val[:7], did_))
             conn.execute("UPDATE deals SET status = 'active' WHERE status IS NULL OR status = ''")
         except Exception:
             pass
@@ -223,8 +226,10 @@ def insert_deal(path, deal, tenant_id=None):
     init_db(path)
     conn = _connect(path)
     try:
-        # deal may carry tenant_id; prefer explicit arg
         tid = tenant_id if tenant_id is not None else deal.get("tenant_id")
+        # Month is strictly derived from escritura_date; if escritura_date given, month must match its YYYY-MM
+        ed = deal.get("escritura_date") or (deal["month"] + "-01" if "month" in deal and deal.get("month") else "")
+        derived_month = ed[:7] if ed and len(ed) >= 7 else deal.get("month", "")
         cursor = conn.execute(
             "INSERT INTO deals (name, agency, escritura_date, month, stage, status, cpcv_date,"
             " agency_commission_cents, share_rate, part_base,"
@@ -234,8 +239,8 @@ def insert_deal(path, deal, tenant_id=None):
             (
                 deal["name"],
                 deal["agency"],
-                deal.get("escritura_date") or (deal["month"] + "-01") if "month" in deal else "",
-                deal["month"],
+                ed,
+                derived_month,
                 deal["stage"],
                 deal.get("status", "active"),
                 deal.get("cpcv_date"),
@@ -278,6 +283,8 @@ def update_deal(path, deal_id, tenant_id, fields):
     init_db(path)
     conn = _connect(path)
     try:
+        ed = fields.get("escritura_date") or (fields["month"] + "-01" if "month" in fields and fields.get("month") else "")
+        derived_month = ed[:7] if ed and len(ed) >= 7 else fields.get("month", "")
         cur = conn.execute(
             "UPDATE deals SET name=?, agency=?, escritura_date=?, month=?, stage=?, status=?, cpcv_date=?,"
             " agency_commission_cents=?, share_rate=?, part_base=?,"
@@ -286,8 +293,8 @@ def update_deal(path, deal_id, tenant_id, fields):
             (
                 fields["name"],
                 fields["agency"],
-                fields.get("escritura_date") or (fields["month"] + "-01") if "month" in fields else "",
-                fields["month"],
+                ed,
+                derived_month,
                 fields["stage"],
                 fields.get("status", "active"),
                 fields.get("cpcv_date"),
@@ -434,6 +441,14 @@ def delete_deal(path, deal_id, tenant_id):
         return cur.rowcount > 0
     finally:
         conn.close()
+
+def list_active_deals(path, tenant_id):
+    """Active (non-fallen) deals for forecast; never includes fallen."""
+    return [d for d in list_deals(path, tenant_id=tenant_id) if d.get("status") != "fallen"]
+
+def list_fallen_deals(path, tenant_id):
+    """Fallen deals only, for collapsed list."""
+    return [d for d in list_deals(path, tenant_id=tenant_id) if d.get("status") == "fallen"]
 
 def months_with_deals(path, tenant_id=None):
     init_db(path)
