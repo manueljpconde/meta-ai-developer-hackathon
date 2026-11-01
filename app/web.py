@@ -378,8 +378,13 @@ def nav(lang, current=""):
 
 
 def page(lang, csrf, title, body, current="", signed_in=False):
+    def signout_form():
+        return ('<form method="post" action="/signout" class="signout-form">'
+                '<input type="hidden" name="csrf_token" value="%s">'
+                '<button type="submit" data-i18n="signout_label">%s</button>'
+                '</form>' % (esc(csrf), esc(i18n.text(lang, "signout_label"))))
     if signed_in:
-        header = '<div class="brand">Agentimo</div>%s%s' % (nav(lang, current), lang_switch(lang, csrf))
+        header = '<div class="brand">Agentimo</div>%s%s%s' % (nav(lang, current), lang_switch(lang, csrf), signout_form())
     else:
         header = '<div class="brand">Agentimo</div>%s' % lang_switch(lang, csrf)
     return (
@@ -641,6 +646,26 @@ def forecast_section(lang, month, deals, expenses_cents):
         escritura = esc(format_date(deal.get("escritura_date",""), lang))
         return '<tr class="deal-row"><td><a href="/deals/edit?id=%d">%s</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (deal["id"], esc(deal["name"]), esc(i18n.text(lang, "st_" + deal["stage"])), esc(format_amount(deal["part_base"], lang)), escritura, cpcv)
     rows = "".join(_deal_row(d) for d in deals)
+    def _card(deal):
+        cpcv = esc(format_date(deal.get("cpcv_date",""), lang)) if deal.get("cpcv_date") else ""
+        escritura = esc(format_date(deal.get("escritura_date",""), lang))
+        return ('<article class="deal-card">'
+                '<a href="/deals/edit?id=%d">%s</a>'
+                '<span class="deal-card__label" data-i18n="card_name">%s</span><span>%s</span>'
+                '<span class="deal-card__label" data-i18n="card_stage">%s</span><span>%s</span>'
+                '<span class="deal-card__label" data-i18n="card_amount">%s</span><span>%s</span>'
+                '<span class="deal-card__label" data-i18n="card_escritura">%s</span><span>%s</span>'
+                '<span class="deal-card__label" data-i18n="card_cpcv">%s</span><span>%s</span>'
+                '</article>') % (
+                    deal["id"], esc(deal["name"]),
+                    esc(i18n.text(lang, "card_name")), esc(deal["name"]),
+                    esc(i18n.text(lang, "card_stage")), esc(i18n.text(lang, "st_" + deal["stage"])),
+                    esc(i18n.text(lang, "card_amount")), esc(format_amount(deal["part_base"], lang)),
+                    esc(i18n.text(lang, "card_escritura")), escritura,
+                    esc(i18n.text(lang, "card_cpcv")), cpcv,
+                )
+    cards = "".join(_card(d) for d in deals)
+    cards_html = '<div class="deal-cards">%s</div>' % cards
     breakdown = result["protected_breakdown"]
     return (
         "<section><h2>%s</h2>"
@@ -650,7 +675,7 @@ def forecast_section(lang, month, deals, expenses_cents):
         '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
         '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
         "</dl>"
-        '<h3 data-i18n="m_deals">%s</h3><table class="deal-table"><thead><tr><th>Name</th><th>Stage</th><th>Amount</th><th>Escritura date</th><th>CPCV date</th></tr></thead><tbody>%s</tbody></table></section>'
+        '<h3 data-i18n="m_deals">%s</h3><table class="deal-table"><thead><tr><th data-i18n="th_name">%s</th><th data-i18n="th_stage">%s</th><th data-i18n="th_amount">%s</th><th data-i18n="th_escritura">%s</th><th data-i18n="th_cpcv">%s</th></tr></thead><tbody>%s</tbody></table>%s</section>'
         % (
             esc(format_month(month, lang)),
             esc(i18n.text(lang, "m_commission")),
@@ -667,7 +692,9 @@ def forecast_section(lang, month, deals, expenses_cents):
             esc(format_amount(breakdown["ss_reserve"], lang)),
             esc(i18n.text(lang, "m_really")),
             esc(format_amount(result["really_available"], lang)),
-            esc(i18n.text(lang, "m_deals")), rows,
+            esc(i18n.text(lang, "m_deals")),
+            esc(i18n.text(lang, "th_name")), esc(i18n.text(lang, "th_stage")), esc(i18n.text(lang, "th_amount")), esc(i18n.text(lang, "th_escritura")), esc(i18n.text(lang, "th_cpcv")),
+            rows, cards_html,
         )
     )
 

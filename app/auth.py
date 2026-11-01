@@ -8,7 +8,7 @@ import re
 from app import store
 
 LINK_EXPIRY_SECONDS = 15 * 60
-SESSION_EXPIRY_SECONDS = 30 * 24 * 3600
+SESSION_EXPIRY_SECONDS = 24 * 3600
 
 EMAIL_RATE_LIMIT = 5
 IP_RATE_LIMIT = 20
@@ -87,7 +87,12 @@ def get_valid_session(path, session_id, now=None):
     sess = store.get_session(path, session_id)
     if sess is None:
         return None
-    if now > sess["expires_at"]:
-        store.delete_session(path, session_id)
+    # Expiry strictly from created_at: 24h after sign-in, so old 30-day rows
+    # also stop working 24h after sign-in.
+    if now > sess["created_at"] + SESSION_EXPIRY_SECONDS:
+        try:
+            store.delete_session(path, session_id)
+        except Exception:
+            pass
         return None
     return sess

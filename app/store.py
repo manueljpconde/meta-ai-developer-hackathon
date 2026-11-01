@@ -119,6 +119,17 @@ def init_db(path):
             conn.execute("UPDATE deals SET status = 'active' WHERE status IS NULL OR status = ''")
         except Exception:
             pass
+        # Startup migration: delete every deal whose idempotency key starts with example-, for every tenant, exactly once
+        try:
+            if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'").fetchone() is None:
+                conn.execute("CREATE TABLE schema_migrations (id TEXT PRIMARY KEY)")
+            mid = "example_deals_cleanup_v1"
+            existing = conn.execute("SELECT id FROM schema_migrations WHERE id = ?", (mid,)).fetchone()
+            if existing is None:
+                conn.execute("DELETE FROM deals WHERE idempotency_key LIKE 'example-%'")
+                conn.execute("INSERT INTO schema_migrations (id) VALUES (?)", (mid,))
+        except Exception:
+            pass
         conn.commit()
     finally:
         conn.close()

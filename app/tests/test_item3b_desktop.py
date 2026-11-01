@@ -23,7 +23,9 @@ class DealListTableTest(AppTestCase):
         self.assertIn("<tbody>", home)
         self.assertIn('<tr class="deal-row"', home.lower() if "deal-row" in home.lower() else home)
         # Columns: name, stage, amount, escritura date, cpcv date headers
-        self.assertIn("Escritura", home)
+        self.assertIn("Nome", home)
+        self.assertIn("Fase", home)
+        self.assertIn("Valor", home)
         self.assertIn("CPCV", home)
         # CPCV date visible in row
         self.assertIn("outubro", home.lower())
