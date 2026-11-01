@@ -219,6 +219,18 @@ fieldset label input[type="radio"] { width: auto; min-height: auto; display: inl
   border-bottom: 1px solid #e6ebe8;
   text-align: left;
 }
+.deal-cards { display: none; }
+.deal-card { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.5rem; border: 1px solid #e6ebe8; background: #fff; padding: 0.5rem; margin-bottom: 0.5rem; }
+.deal-card a { grid-column: 1 / -1; font-weight: 700; }
+.deal-card__label { font-weight: 600; color: #5f6f6a; }
+.signout-form { display: inline-flex; align-items: center; margin: 0; }
+.signout-form button { font-size: 0.85rem; width: auto; min-height: auto; height: 32px; max-height: 44px; padding: 0.2rem 0.5rem; background: transparent; color: #16302c; border: 1px solid transparent; }
+
+/* Narrow: stacked cards, no sideways scroll */
+@media (max-width: 390px) {
+  .deal-table { display: none; }
+  .deal-cards { display: block; }
+}
 
 /* Desktop layout from 1024px */
 @media (min-width: 1024px) {

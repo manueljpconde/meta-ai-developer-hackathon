@@ -20,7 +20,7 @@ Binding owner amendments applied (request page): (1) AI cost guard of
 at most 30 updates per tenant per day, voice notes up to 60 s, cap
 message in the page language; (2) existing live data (Deal Name 1 and
 the demo settings) is dropped when accounts go live and the first real
-account starts empty; (3) the session lasts 30 days from sign-in, not
+account starts empty; (3) the session lasts 24 hours from sign-in, not
 sliding; (4) the sign-in email uses the page language at the time of
 the request; (5) accounts and isolation are built before voice and
 text updates.
@@ -86,7 +86,7 @@ and stubbed mail, never real sends.
 Sessions replace the current in-memory `SESSIONS` dict, which cannot
 survive restarts or separate tenants. A session row holds a random
 session id, its tenant, creation time, and a fixed expiry of creation
-plus 30 days, never extended by visits (non-sliding per amendment
+plus 24 hours, never extended by visits (non-sliding per amendment
 (3)). The cookie is `HttpOnly`, `Secure`, `Path=/`, `SameSite=Lax`
 (the current `SameSite=Strict` breaks the return trip from the mail
 link; Lax keeps CSRF posture with the existing per-session CSRF token
@@ -103,7 +103,7 @@ a page stating removal is complete with no recovery. No grace period,
 no recovery path, per the owner's answer.
 
 Options considered: (a) sliding sessions refreshed on each visit;
-(b) fixed 30 days from sign-in. Chosen (b) per amendment (3): fixed
+(b) fixed 24 hours from sign-in. Chosen (b) per amendment (3): fixed
 expiry is one timestamp comparison, needs no write per visit, and
 matches what the agent was told at sign-in. Options for link state:
 (a) in-memory; (b) database rows. Chosen (b): links must survive
@@ -300,7 +300,7 @@ existing suite patterns, and no test touches the network:
   reuse and expiry and guessed tokens yield nothing; rate limits per
   email and per IP refuse without sending; first valid link for an
   unknown address creates the tenant; no valid session renders no
-  data; sessions expire exactly 30 days after creation with visits
+  data; sessions expire exactly 24 hours after creation with visits
   not extending them; sign-out ends only that device's session;
   typed-email deletion removes every row of the tenant with no
   recovery, and mismatched typed addresses delete nothing; mail
@@ -398,7 +398,7 @@ transcription, model, and mail, with no network calls in tests:
    and valid 15 minutes; rate limits per email and per IP refuse
    without sending; the mail tests prove no message ever leaves the
    test run.
-3. A session expires exactly 30 days after sign-in regardless of
+3. A session expires exactly 24 hours after sign-in regardless of
    visits; sign-out ends only that device's session.
 4. Deleting the account runs only when the typed address matches,
    then leaves no row of any kind for the tenant, with no recovery.
@@ -437,7 +437,7 @@ transcription, model, and mail, with no network calls in tests:
 - Email-link sign-up and sign-in in one flow: T2, criterion 2.
 - Link token, hash, single use, 15 minutes, rate limits: T2,
   criterion 2.
-- 30-day session, secure HTTP-only cookie, per-device sign-out: T2,
+- 24-hour session, secure HTTP-only cookie, per-device sign-out: T2,
   criterion 3.
 - Relay mail, environment settings, no mail in tests: T3, criterion
   2.
@@ -460,7 +460,7 @@ transcription, model, and mail, with no network calls in tests:
   message: T5, T7, criterion 13.
 - Live demo data dropped, first account starts empty: T1, T4,
   criterion 5.
-- 30-day non-sliding session: T2, criterion 3.
+- 24-hour non-sliding session: T2, criterion 3.
 - Sign-in email in the page language at request time: T3.
 - Accounts and isolation before voice and text: T11.
 - Options and reasons per decision: recorded under each decision.

@@ -61,12 +61,12 @@ class SessionTest(unittest.TestCase):
         auth.request_link(path, "u@v.com", "1.2.3.4", now=1000.0, token=token)
         link = auth.verify_link(path, token, now=1010.0)
         sess = auth.create_session_for_link(path, link, now=1010.0)
-        # valid within 30 days
-        found = auth.get_valid_session(path, sess["id"], now=1010.0 + 29 * 24 * 3600)
+        # valid within 24 hours (updated from 30 days)
+        found = auth.get_valid_session(path, sess["id"], now=1010.0 + 23 * 3600)
         self.assertIsNotNone(found)
         self.assertEqual(found["email"], "u@v.com")
-        # expired after 30 days
-        expired = auth.get_valid_session(path, sess["id"], now=1010.0 + 31 * 24 * 3600)
+        # expired after 24 hours
+        expired = auth.get_valid_session(path, sess["id"], now=1010.0 + 25 * 3600)
         self.assertIsNone(expired)
 
     def test_session_not_extended_by_visits(self):
@@ -77,9 +77,9 @@ class SessionTest(unittest.TestCase):
         auth.request_link(path, "u2@v.com", "1.2.3.4", now=1000.0, token=token)
         link = auth.verify_link(path, token, now=1010.0)
         sess = auth.create_session_for_link(path, link, now=1010.0)
-        # visiting at 15 days does not extend
-        auth.get_valid_session(path, sess["id"], now=1010.0 + 15 * 24 * 3600)
-        expired = auth.get_valid_session(path, sess["id"], now=1010.0 + 31 * 24 * 3600)
+        # visiting at 12 hours does not extend
+        auth.get_valid_session(path, sess["id"], now=1010.0 + 12 * 3600)
+        expired = auth.get_valid_session(path, sess["id"], now=1010.0 + 25 * 3600)
         self.assertIsNone(expired)
 
     def test_sign_out_ends_only_that_session(self):
