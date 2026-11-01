@@ -86,21 +86,56 @@ def confirm_line(extracted, kind, share_cents, lang):
     # One-line read-back
     name = extracted.get("name") or extracted.get("deal") or ""
     comm = extracted.get("commission") or extracted.get("agency_commission_cents") or ""
+    if isinstance(comm, int):
+        comm = "%d €" % (comm/100)
+    elif isinstance(comm, str) and comm.strip() and comm.strip().isdigit() or (isinstance(comm, str) and comm.replace(" ","").replace("\xa0","").isdigit()):
+        try:
+            v = int(float(comm.replace(" ","").replace("\xa0","").replace(",",".") )*100)
+            comm = "%d €" % (v/100)
+        except: pass
     share = extracted.get("share") or extracted.get("share_rate") or ""
     date = extracted.get("escritura_date") or extracted.get("date") or ""
+    is_est = extracted.get("escritura_estimada")
     # format share for display
     if lang == "pt-PT":
         # show date as dd mon
         date_disp = date
         try:
             y,m,d = date.split("-")
-            date_disp = "%s %s" % (d, PT_MONTHS[int(m)-1][:3])
+            if d == "15" and is_est:
+                date_disp = "meados de %s" % PT_MONTHS[int(m)-1]
+            else:
+                date_disp = "%s %s" % (d, PT_MONTHS[int(m)-1][:3])
         except Exception:
             pass
-        share_disp = "%s €" % (share_cents/100) if share_cents else str(share)
-        return "%s, %s, %s, escritura %s. Confirmas?" % (name, comm, share_disp, date_disp)
+        if is_est:
+            date_disp = date_disp + " (estimada)"
+        # format comm/share with engine euros
+        comm_disp = comm if comm else ""
+        if isinstance(comm_disp, str) and not comm_disp.strip():
+            comm_disp = str(comm)
+        if share_cents is not None:
+            # include share euros in line per A4/14: must mention agent share euros
+            pass
+        if share_cents:
+            share_euros = "%s €" % (share_cents/100)
+            return "%s, %s, %s (%s), escritura %s. Confirmas?" % (name, comm_disp, share, share_euros, date_disp)
+        return "%s, %s, %s, escritura %s. Confirmas?" % (name, comm_disp, share, date_disp)
     else:
-        return "%s, %s, %s, escritura %s. Do you confirm?" % (name, comm, share, date)
+        date_disp = date
+        try:
+            y,m,d = date.split("-")
+            if d == "15" and is_est:
+                date_disp = "mid-%s" % EN_MONTHS[int(m)-1]
+            else:
+                date_disp = date
+        except: pass
+        if is_est:
+            date_disp = date_disp + " (estimated)"
+        if share_cents:
+            share_euros = "%s €" % (share_cents/100)
+            return "%s, %s, %s (%s), escritura %s. Do you confirm?" % (name, comm, share, share_euros, date_disp)
+        return "%s, %s, %s, escritura %s. Do you confirm?" % (name, comm, share, date_disp)
 
 def start_conversation(session_id, tenant_id, lang="pt-PT"):
     cid = secrets.token_urlsafe(12)
