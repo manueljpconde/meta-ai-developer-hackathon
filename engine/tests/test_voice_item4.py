@@ -1,0 +1,136 @@
+"""Engine voice tests: WAV 60s cap, multipart shape, month-only estimated, match, calc boundary."""
+import struct
+import unittest
+
+from app.voice import validate_wav, TranscriptionClient, ExtractionClient
+from engine.voice import parse_month_only, missing_fields, format_estimated_month, match_deal
+
+
+def make_wav(duration_s=1):
+    sr = 16000
+    samples = int(sr * duration_s)
+    header = bytearray(44)
+    header[0:4] = b"RIFF"
+    header[8:12] = b"WAVE"
+    header[12:16] = b"fmt "
+    struct.pack_into("<I", header, 16, 16)
+    struct.pack_into("<H", header, 20, 1)
+    struct.pack_into("<H", header, 22, 1)
+    struct.pack_into("<I", header, 24, 16000)
+    struct.pack_into("<I", header, 28, 32000)
+    struct.pack_into("<H", header, 32, 2)
+    struct.pack_into("<H", header, 34, 16)
+    header[36:40] = b"data"
+    struct.pack_into("<I", header, 40, samples * 2)
+    header[4:8] = struct.pack("<I", 36 + samples * 2)[0].to_bytes(4, "little") if False else struct.pack("<I", 36 + samples*2)
+    # fix sizes
+    import struct as st
+    st.pack_into("<I", header, 4, 36 + samples*2)
+    return bytes(header) + b"\x00\x00" * samples
+
+
+class ValidateWavTest(unittest.TestCase):
+    def test_wav_valid_mono16k(self):
+        ok, _ = validate_wav(make_wav(1))
+        self.assertTrue(ok)
+
+    def test_wav_rejects_short(self):
+        ok, _ = validate_wav(b"RIFF")
+        self.assertFalse(ok)
+
+    def test_wav_rejects_stereo(self):
+        data = bytearray(make_wav(1))
+        struct.pack_into("<H", data, 22, 2)
+        ok, err = validate_wav(bytes(data))
+        self.assertFalse(ok)
+        self.assertEqual(err, "channels")
+
+    def test_wav_rejects_wrong_rate(self):
+        data = bytearray(make_wav(1))
+        struct.pack_into("<I", data, 24, 44100)
+        ok, err = validate_wav(bytes(data))
+        self.assertFalse(ok)
+        self.assertEqual(err, "rate")
+
+    def test_wav_rejects_60s_cap(self):
+        ok, err = validate_wav(make_wav(61))
+        self.assertFalse(ok)
+        self.assertEqual(err, "duration")
+
+    def test_wav_60s_passes(self):
+        ok, _ = validate_wav(make_wav(60))
+        self.assertTrue(ok)
+
+
+class MultipartShapeTest(unittest.TestCase):
+    def test_multipart_shape_criterion9(self):
+        c = TranscriptionClient(api_key="k", api_base="https://api.meta.ai/v1")
+        shape = c.multipart_shape()
+        self.assertEqual(shape["parts"], 2)
+        self.assertEqual(shape["names"], ["request", "audio"])
+        self.assertEqual(shape["request_model"], "muse-voice-transcribe-1.0")
+        self.assertEqual(shape["audioEncoding"], "WAV")
+
+    def test_extraction_model_is_muse_spark(self):
+        from app.voice import MODEL_NAME
+        self.assertEqual(MODEL_NAME, "muse-spark-1.3")
+        c = ExtractionClient(api_key="k", api_base="https://api.meta.ai/v1", timeout=30)
+        self.assertEqual(c.timeout, 30)
+
+
+class MonthOnlyEstimatedTest(unittest.TestCase):
+    def test_month_only_pt_maps_to_15th_estimated(self):
+        d, est = parse_month_only("março")
+        self.assertEqual(d, "2026-03-15")
+        self.assertTrue(est)
+
+    def test_month_only_en_maps_to_15th_estimated(self):
+        d, est = parse_month_only("March")
+        self.assertEqual(d, "2026-03-15")
+        self.assertTrue(est)
+
+    def test_exact_date_not_estimated(self):
+        d, est = parse_month_only("2026-03-15")
+        self.assertIsNone(d)
+        self.assertFalse(est)
+
+    def test_format_estimated_pt(self):
+        self.assertEqual(format_estimated_month("2026-03-15", "pt-PT"), "meados de março")
+
+    def test_format_estimated_en(self):
+        self.assertEqual(format_estimated_month("2026-03-15", "en-GB"), "mid-March")
+
+
+class MissingFieldsTest(unittest.TestCase):
+    def test_new_deal_missing_all(self):
+        miss = missing_fields("new_deal", {})
+        self.assertIn("name", miss)
+        self.assertIn("escritura_date", miss)
+
+    def test_new_deal_no_missing_when_full(self):
+        miss = missing_fields("new_deal", {"name": "T3", "agency_commission_cents": 1000000, "share_rate": "0.4", "escritura_date": "2026-03-15", "stage": "confirmado"})
+        self.assertEqual(miss, [])
+
+
+class MatchDealTest(unittest.TestCase):
+    def test_match_exact_single(self):
+        deals = [{"name": "T3 Benfica"}, {"name": "T2 Porto"}]
+        m, c = match_deal("T3 Benfica", deals)
+        self.assertIsNotNone(m)
+
+    def test_match_no_match_returns_candidates(self):
+        deals = [{"name": "T3 Benfica"}, {"name": "T2 Porto"}]
+        m, c = match_deal("Unknown", deals)
+        self.assertIsNone(m)
+
+    def test_match_substring_single(self):
+        deals = [{"name": "T3 Benfica Central"}, {"name": "T2 Porto"}]
+        m, c = match_deal("Benfica", deals)
+        self.assertIsNotNone(m)
+
+
+class MoneyBoundaryTest(unittest.TestCase):
+    def test_euro_via_calc_not_model(self):
+        from engine.calc import agent_share
+        self.assertEqual(agent_share(1000000, "0.4"), 400000)
+
