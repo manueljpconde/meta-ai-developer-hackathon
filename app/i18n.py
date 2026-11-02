@@ -128,6 +128,13 @@ STRINGS = {
         "voice_what_to_fix": "O que queres corrigir?",
         "voice_no_audio": "Não recebi áudio.",
         "voice_panel_label": "Conversa com o Agentimo",
+        "voice_no_conversation": "Não há nada para confirmar.",
+        "voice_not_found": "Não encontrei o negócio «%s».",
+        "voice_which_deal": "Qual destes negócios: %s?",
+        "voice_no_deals": "Ainda não tens negócios.",
+        "voice_fix_prompt": "Diz o que corrigir.",
+        "voice_already": "Esta conversa já terminou.",
+        "voice_no_settings": "Define primeiro as definições.",
         "vf_name": "o nome",
         "vf_commission": "a comissão",
         "vf_share": "a tua percentagem",
@@ -289,6 +296,13 @@ STRINGS = {
         "voice_what_to_fix": "What should I correct?",
         "voice_no_audio": "No audio received.",
         "voice_panel_label": "Conversation with Agentimo",
+        "voice_no_conversation": "Nothing to confirm.",
+        "voice_not_found": "I could not find the deal \"%s\".",
+        "voice_which_deal": "Which of these deals: %s?",
+        "voice_no_deals": "You have no deals yet.",
+        "voice_fix_prompt": "Say what to correct.",
+        "voice_already": "This conversation has ended.",
+        "voice_no_settings": "Set your settings first.",
         "vf_name": "the name",
         "vf_commission": "the commission",
         "vf_share": "your share",
@@ -330,6 +344,27 @@ STRINGS = {
 }
 
 SUPPORTED = ("pt-PT", "en-GB")
+
+# Month names for the voice read-back, one key per month in each language:
+# month_1 .. month_12 (full name) and mon_1 .. mon_12 (short form).
+_MONTH_NAMES = {
+    "pt-PT": (
+        ("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+         "agosto", "setembro", "outubro", "novembro", "dezembro"),
+        ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago",
+         "set", "out", "nov", "dez"),
+    ),
+    "en-GB": (
+        ("January", "February", "March", "April", "May", "June", "July",
+         "August", "September", "October", "November", "December"),
+        ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
+         "Oct", "Nov", "Dec"),
+    ),
+}
+for _code, (_full, _short) in _MONTH_NAMES.items():
+    for _i in range(12):
+        STRINGS[_code]["month_%d" % (_i + 1)] = _full[_i]
+        STRINGS[_code]["mon_%d" % (_i + 1)] = _short[_i]
 
 
 def text(lang, key):
