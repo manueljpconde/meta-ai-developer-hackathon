@@ -57,6 +57,19 @@ class ValidateWavTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(err, "duration")
 
+    def test_wav_rejects_a_bad_fmt_marker(self):
+        data = bytearray(make_wav(1))
+        data[12:16] = b"BAD!"
+        self.assertEqual(validate_wav(bytes(data)), (False, "fmt"))
+
+    def test_wav_rejects_just_over_60s(self):
+        self.assertEqual(validate_wav(make_wav(60.01)), (False, "duration"))
+
+    def test_wav_rejects_audio_beyond_what_the_header_declares(self):
+        data = bytearray(make_wav(61))
+        struct.pack_into("<I", data, 40, 32000)
+        self.assertEqual(validate_wav(bytes(data)), (False, "duration"))
+
     def test_wav_60s_passes(self):
         ok, _ = validate_wav(make_wav(60))
         self.assertTrue(ok)

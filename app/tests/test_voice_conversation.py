@@ -4,6 +4,7 @@ Extraction and transcription are stubbed; nothing touches the network.
 """
 import json
 import re
+import struct
 
 from app import store, voice_flow
 from app.tests.helpers import csrf_token
@@ -812,6 +813,24 @@ class SpokenConversationTest(VoiceTestCase):
                         data = self.post_audio(self.page_token(lang), wav, lang)
                     self.assertEqual((data["state"], data["message"]), ("error", message))
                     self.assertEqual((transcription.audio, extraction.calls), ([], []))
+
+    def test_a_wav_without_the_fmt_marker_or_over_60_seconds_is_refused_and_nothing_is_saved(self):
+        no_fmt = bytearray(make_wav(1))
+        no_fmt[12:16] = b"BAD!"
+        understated = bytearray(make_wav(61))
+        understated[40:44] = struct.pack("<I", 32000)
+        bad = {"fmt marker BAD!": bytes(no_fmt), "60.01 s": make_wav(60.01),
+               "61 s with a header that declares 1 s": bytes(understated)}
+        for lang, message in (("pt-PT", "Áudio inválido. Envia WAV mono 16-bit a 16000 Hz, até 60 s."),
+                              ("en-GB", "Invalid audio. Send mono 16-bit WAV at 16000 Hz, up to 60 s.")):
+            for name, wav in bad.items():
+                with self.subTest(lang=lang, wav=name):
+                    transcription = ScriptedTranscription()
+                    extraction = ScriptedExtraction()
+                    with stub_clients(extraction, transcription):
+                        data = self.post_audio(self.page_token(lang), wav, lang)
+                    self.assertEqual((data["state"], data["message"]), ("error", message))
+                    self.assertEqual((transcription.audio, extraction.calls, self.deals()), ([], [], []))
 
     def test_a_good_60_second_wav_is_accepted(self):
         transcription = ScriptedTranscription("olá")

@@ -23,7 +23,7 @@ MODEL_NAME = "muse-spark-1.3"
 TRANSCRIBE_MODEL = "muse-voice-transcribe-1.0"
 TRANSCRIBE_PATH = "/asr/transcribe"
 MAX_AUDIO_SECONDS = 60
-MAX_AUDIO_BYTES = 16000 * 2 * 60 + 44  # mono 16-bit 16kHz 60s plus header
+MAX_AUDIO_BYTES = 16000 * 2 * MAX_AUDIO_SECONDS  # audio bytes of 60 s, mono 16-bit 16 kHz
 
 # WAV constants
 WAV_HEADER_SIZE = 44
@@ -31,19 +31,20 @@ WAV_HEADER_SIZE = 44
 
 def validate_wav(data):
     """Check WAV header: RIFF/WAVE, PCM, mono, 16-bit, 16000 Hz. Return (ok, error_key)."""
-    if len(data) < 44:
+    if len(data) < WAV_HEADER_SIZE:
         return False, "short"
     if data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
         return False, "riff"
-    # find fmt chunk
+    if data[12:16] != b"fmt ":
+        return False, "fmt"
     try:
-        # basic header at offsets: 20 audioFormat, 22 channels, 24 sampleRate, 34 bitsPerSample
-        audio_format = struct.unpack_from("<H", data, 20)[0]
-        channels = struct.unpack_from("<H", data, 22)[0]
-        sample_rate = struct.unpack_from("<I", data, 24)[0]
+        fmt_size = struct.unpack_from("<I", data, 16)[0]
+        audio_format, channels, sample_rate = struct.unpack_from("<HHI", data, 20)
         bits = struct.unpack_from("<H", data, 34)[0]
     except struct.error:
         return False, "parse"
+    if fmt_size < 16:
+        return False, "fmt"
     if audio_format != 1:
         return False, "format"
     if channels != 1:
@@ -52,13 +53,23 @@ def validate_wav(data):
         return False, "rate"
     if bits != 16:
         return False, "bits"
-    # duration check: data size minus header over bytes per second
-    data_len = len(data) - 44
-    seconds = data_len / (16000 * 2)
-    if seconds > MAX_AUDIO_SECONDS + 0.5:
+    # The data chunk follows the fmt chunk (chunks are padded to even sizes).
+    # The duration is the larger of what the data chunk declares and the audio
+    # bytes actually present, so an understating header cannot pass the cap.
+    offset = 20 + fmt_size + (fmt_size & 1)
+    declared = None
+    while offset + 8 <= len(data):
+        chunk_id = data[offset:offset + 4]
+        chunk_size = struct.unpack_from("<I", data, offset + 4)[0]
+        if chunk_id == b"data":
+            declared = chunk_size
+            offset += 8
+            break
+        offset += 8 + chunk_size + (chunk_size & 1)
+    if declared is None:
+        return False, "data"
+    if max(declared, len(data) - offset) > MAX_AUDIO_BYTES:
         return False, "duration"
-    if len(data) > MAX_AUDIO_BYTES + 1024:
-        return False, "too_large"
     return True, ""
 
 
