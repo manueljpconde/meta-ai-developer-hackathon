@@ -211,7 +211,7 @@ def merge_extraction(conv, extracted):
         iso, estimated = parse_date(extracted[key])
         if iso is None:
             continue
-        if key == "date" and estimated and kind != "escritura_date":
+        if estimated and key in ("date", "cpcv_date") and kind != "escritura_date":
             continue  # a CPCV or a receipt needs the exact day
         ex[key] = iso
         if key == "escritura_date" or (key == "date" and kind == "escritura_date"):
@@ -235,6 +235,40 @@ def apply_aliases(conv):
             ex[target] = ex[source]
     if kind in DEAL_KINDS and ex.get("deal") is None and ex.get("name"):
         ex["deal"] = ex["name"]
+    if kind == "new_deal" and ex.get("name") is None and ex.get("deal"):
+        ex["name"] = ex["deal"]
+
+
+def fill_bare_number(conv, text):
+    """A bare number answers the one numeric field still missing.
+
+    "40 %" is a share, "10 000 €" an amount; a number with no sign
+    answers only when exactly one numeric field is missing.
+    """
+    kind = conv.get("kind")
+    ex = conv["extracted"]
+    stripped = text.strip()
+    if not re.fullmatch(r"[0-9][0-9.,\s\u00a0]*\s*(%|€|euros?)?", stripped, re.IGNORECASE):
+        return
+    missing = [f for f in missing_for(kind, ex) if f in ("commission", "amount", "share", "percentage")]
+    rate_fields = [f for f in missing if f in ("share", "percentage")]
+    money_fields = [f for f in missing if f in ("commission", "amount")]
+    if stripped.endswith("%"):
+        candidates = rate_fields
+    elif re.search(r"€|euro", stripped, re.IGNORECASE):
+        candidates = money_fields
+    else:
+        candidates = missing
+    if len(candidates) != 1:
+        return
+    field = candidates[0]
+    if field in ("share", "percentage"):
+        value = parse_rate(stripped)
+    else:
+        value = parse_money(stripped)
+    if value is not None:
+        ex[field] = value
+    apply_aliases(conv)
 
 
 def missing_for(kind, extracted):

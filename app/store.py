@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS voice_conversations (
     created_at REAL NOT NULL,
     transcript TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    deal_id INTEGER NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    received_date TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE
+);
 CREATE TABLE IF NOT EXISTS voice_limits (
     tenant_id INTEGER NOT NULL,
     day TEXT NOT NULL,
@@ -477,6 +486,7 @@ def delete_deal(path, deal_id, tenant_id):
     init_db(path)
     conn = _connect(path)
     try:
+        conn.execute("DELETE FROM receipts WHERE deal_id = ? AND tenant_id = ?", (deal_id, tenant_id))
         cur = conn.execute("DELETE FROM deals WHERE id = ? AND tenant_id = ?", (deal_id, tenant_id))
         conn.commit()
         return cur.rowcount > 0
@@ -550,6 +560,9 @@ def delete_tenant(path, tenant_id):
     try:
         row = conn.execute("SELECT email FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
         email = row[0] if row else None
+        conn.execute("DELETE FROM receipts WHERE tenant_id = ?", (tenant_id,))
+        conn.execute("DELETE FROM voice_conversations WHERE tenant_id = ?", (tenant_id,))
+        conn.execute("DELETE FROM voice_limits WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM deals WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM settings WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM sessions WHERE tenant_id = ?", (tenant_id,))
@@ -740,6 +753,60 @@ def voice_day(today=None):
         now = _dt.now()
     return now.strftime("%Y-%m-%d")
 
+VOICE_DAILY_LIMIT = 30
+
+
+def voice_limit_reached(path, tenant_id):
+    """True when today's conversations are used up. Counts nothing."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        row = conn.execute("SELECT count FROM voice_limits WHERE tenant_id=? AND day=?", (tenant_id, voice_day())).fetchone()
+    finally:
+        conn.close()
+    return row is not None and row[0] >= VOICE_DAILY_LIMIT
+
+
+def insert_receipt(path, tenant_id, deal_id, amount_cents, received_date, idempotency_key, now=None):
+    """Record a commission receipt for a deal of the tenant; returns its id."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        owned = conn.execute("SELECT 1 FROM deals WHERE id = ? AND tenant_id = ?", (deal_id, tenant_id)).fetchone()
+        if owned is None:
+            raise ValueError("deal not found for tenant")
+        try:
+            cur = conn.execute(
+                "INSERT INTO receipts (tenant_id, deal_id, amount_cents, received_date, created_at, idempotency_key)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (tenant_id, deal_id, amount_cents, received_date, now if now is not None else time.time(), idempotency_key))
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            row = conn.execute("SELECT id FROM receipts WHERE idempotency_key = ? AND tenant_id = ?", (idempotency_key, tenant_id)).fetchone()
+            if row is None:
+                raise
+            return row[0]
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def list_receipts(path, tenant_id, deal_id=None):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        sql = "SELECT id, deal_id, amount_cents, received_date FROM receipts WHERE tenant_id = ?"
+        args = [tenant_id]
+        if deal_id is not None:
+            sql += " AND deal_id = ?"
+            args.append(deal_id)
+        rows = conn.execute(sql + " ORDER BY id", args).fetchall()
+    finally:
+        conn.close()
+    return [{"id": r[0], "deal_id": r[1], "amount_cents": r[2], "received_date": r[3]} for r in rows]
+
+
 def check_voice_limit(path, tenant_id, now=None):
     """Return True if under 30/day, else False. Increments on success."""
     import time as _t
@@ -754,7 +821,7 @@ def check_voice_limit(path, tenant_id, now=None):
             conn.execute("INSERT INTO voice_limits (tenant_id, day, count) VALUES (?,?,1)", (tenant_id, day))
             conn.commit()
             return True
-        if row[0] >= 30:
+        if row[0] >= VOICE_DAILY_LIMIT:
             return False
         conn.execute("UPDATE voice_limits SET count=count+1 WHERE tenant_id=? AND day=?", (tenant_id, day))
         conn.commit()

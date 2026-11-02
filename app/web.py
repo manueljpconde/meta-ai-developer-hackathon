@@ -7,6 +7,7 @@ parameters only, and responses carry the security headers.
 """
 
 import html
+import json
 import os
 import re
 import secrets
@@ -331,14 +332,14 @@ APP_ROUTES = [
     ("/auth/verify", "GET"),
     ("/signout", "POST"),
     ("/account/delete", "GET"), ("/account/delete", "POST"),
-    ("/static/style.css", "GET"),
+    ("/static/style.css", "GET"), ("/static/voice.js", "GET"),
     ("/settings", "GET"), ("/settings", "POST"),
     ("/deals/new", "GET"),
     ("/deals/review", "POST"),
     ("/deals/confirm", "POST"),
     ("/deals/edit", "GET"), ("/deals/update", "POST"),
     ("/deals/delete", "GET"), ("/deals/delete", "POST"),
-    ("/voice/transcribe", "POST"), ("/voice/turn", "POST"),
+    ("/voice/transcribe", "POST"),
     ("/voice/extract", "POST"), ("/voice/confirm", "POST"), ("/voice/cancel", "POST"),
     ("/language", "POST"),
 ]
@@ -385,19 +386,44 @@ def page(lang, csrf, title, body, current="", signed_in=False):
                 '<input type="hidden" name="csrf_token" value="%s">'
                 '<button type="submit" data-i18n="signout_label">%s</button>'
                 '</form>' % (esc(csrf), esc(i18n.text(lang, "signout_label"))))
-    voice_btn_header = '<button id="voiceFalarHeader" type="button" data-i18n="voice_falar" class="voice-falar-header">\u00f0\u009f\u008e\u0099 %s</button>' % esc(i18n.text(lang, "voice_falar"))
-    voice_btn_fixed = '<button id="voiceFalar" type="button" data-i18n="voice_falar" class="voice-falar-fixed" aria-label="%s">%s</button>' % (esc(i18n.text(lang, "voice_falar")), esc(i18n.text(lang, "voice_falar")))
+    voice_btn_header = (
+        '<button id="voiceFalarHeader" type="button" class="voice-falar-header">'
+        '<span aria-hidden="true">\U0001F399</span> <span data-i18n="voice_falar">%s</span></button>'
+        % esc(i18n.text(lang, "voice_falar")))
+    voice_btn_fixed = (
+        '<button id="voiceFalar" type="button" class="voice-falar-fixed" aria-label="%s">'
+        '<span aria-hidden="true">\U0001F399</span></button>'
+        % esc(i18n.text(lang, "voice_falar")))
     voice_panel = ""
     voice_js = ""
     if signed_in:
-        voice_panel = ('<div id="voicePanel" class="voice-panel" style="display:none"><div class="voice-panel__inner">'
-                       '<div id="voiceTranscript" class="voice-transcript"></div><div id="voiceQuestion" class="voice-question"></div>'
-                       '<div id="voiceReadback" class="voice-readback"></div>'
-                       '<div class="voice-actions"><button type="button" id="voiceConfirmBtn" style="display:none" data-i18n="btn_confirm">%s</button><button type="button" id="voiceCancelBtn">%s</button></div>'
-                       '<form id="voiceTextForm" method="post" action="/voice/extract"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="conversation_id" id="voiceConvId" value=""><input type="text" name="text" id="voiceTextInput" placeholder="escreve..."><button type="submit">Enviar</button></form>'
-                       '<form id="voiceAudioForm" method="post" action="/voice/transcribe"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="audio_b64" id="voiceAudioB64" value=""><input type="hidden" name="conversation_id" id="voiceConvId2" value=""></form>'
-                       '</div></div>' % (esc(i18n.text(lang, "btn_confirm")), esc(i18n.text(lang, "voice_cancelled")), esc(csrf), esc(csrf)))
-        voice_js = """<script>(function(){var ctx,aRec,aChunks=[];function speak(t,lg){try{if(!window.speechSynthesis)return;var u=new SpeechSynthesisUtterance(t);u.lang=lg.indexOf("pt")===0?"pt-PT":"en-GB";var vs=speechSynthesis.getVoices();for(var i=0;i<vs.length;i++)if(vs[i].lang===u.lang){u.voice=vs[i];break;}speechSynthesis.speak(u);}catch(e){}}function encWAV(buf){var l=buf.length,ab=new ArrayBuffer(44+l*2),v=new DataView(ab);function ws(s,o){for(var i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));}ws("RIFF",0);v.setUint32(4,36+l*2,true);ws("WAVE",8);ws("fmt ",12);v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);ws("data",36);v.setUint32(40,l*2,true);var idx=44;for(var i=0;i<l;i++){var sm=Math.max(-1,Math.min(1,buf[i]));v.setInt16(idx,sm<0?sm*0x8000:sm*0x7FFF,true);idx+=2;}return ab;}window.startVoice=function(){try{ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});}catch(e){return;}navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){var src=ctx.createMediaStreamSource(s);aRec=ctx.createScriptProcessor(4096,1,1);aChunks=[];src.connect(aRec);aRec.connect(ctx.destination);aRec.onaudioprocess=function(e){aChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));};document.getElementById("voicePanel").style.display="block";});};document.getElementById("voiceFalar").addEventListener("click",function(){document.getElementById("voicePanel").style.display="block";window.startVoice();});document.getElementById("voiceFalarHeader").addEventListener("click",function(){document.getElementById("voicePanel").style.display="block";window.startVoice();});document.getElementById("voiceConfirmBtn").addEventListener("click",function(){var c=document.getElementById("voiceConvId").value;var tok=document.querySelector("input[name=csrf_token]").value;fetch("/voice/confirm",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"csrf_token="+encodeURIComponent(tok)+"&conversation_id="+encodeURIComponent(c)}).then(function(){location.reload();});});document.getElementById("voiceCancelBtn").addEventListener("click",function(){var c=document.getElementById("voiceConvId").value;var tok=document.querySelector("input[name=csrf_token]").value;fetch("/voice/cancel",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"csrf_token="+encodeURIComponent(tok)+"&conversation_id="+encodeURIComponent(c)}).then(function(){location.reload();});});document.getElementById("voiceTextForm").addEventListener("submit",function(e){e.preventDefault();var f=new FormData(this);fetch("/voice/extract",{method:"POST",body:new URLSearchParams(f)}).then(function(r){return r.text();}).then(function(t){var d=document.createElement("div");d.innerHTML=t;var q=d.querySelector(".voice-question,.voice-readback");var tr=d.querySelector(".transcript");if(q)document.getElementById("voiceQuestion").innerHTML=q.innerHTML;if(tr)document.getElementById("voiceTranscript").innerHTML=tr.innerHTML;var conf=d.querySelector(".voice-confirm");if(conf)document.getElementById("voiceReadback").innerHTML=conf.innerHTML;var cid=d.querySelector("[data-conversation-id]");if(cid)document.getElementById("voiceConvId").value=cid.getAttribute("data-conversation-id");var lang=(d.querySelector("[lang]")||{}).getAttribute?d.querySelector("[lang]").getAttribute("lang"):"pt-PT";var qt=q?q.textContent:"";if(qt)speak(qt,lang);});});window.voiceAsk=function(q,lg){var el=document.getElementById("voiceQuestion");el.textContent=q;document.getElementById("voicePanel").style.display="block";speak(q,lg);};})();</script>"""
+        voice_panel = (
+            '<div id="voicePanel" class="voice-panel" role="dialog" hidden aria-label="%s"'
+            ' data-network-error="%s" data-mic-blocked="%s" data-tap-answer="%s">'
+            '<div class="voice-panel__inner">'
+            '<div id="voiceTranscript" class="voice-transcript"></div>'
+            '<div id="voiceQuestion" class="voice-question"></div>'
+            '<div id="voiceReadback" class="voice-readback"></div>'
+            '<div class="voice-actions">'
+            '<button type="button" id="voiceConfirmBtn" hidden data-i18n="btn_confirm">%s</button>'
+            '<button type="button" id="voiceCancelBtn" data-i18n="voice_cancel_btn">%s</button></div>'
+            '<form id="voiceTextForm" method="post" action="/voice/extract">'
+            '<input type="hidden" name="csrf_token" value="%s">'
+            '<input type="hidden" name="conversation_id" id="voiceConvId" value="">'
+            '<input type="text" name="text" id="voiceTextInput" autocomplete="off" placeholder="%s" aria-label="%s">'
+            '<button type="submit" data-i18n="voice_send">%s</button></form>'
+            '</div></div>'
+            % (esc(i18n.text(lang, "voice_panel_label")),
+               esc(i18n.text(lang, "voice_network_error")),
+               esc(i18n.text(lang, "voice_mic_blocked")),
+               esc(i18n.text(lang, "voice_tap_answer")),
+               esc(i18n.text(lang, "btn_confirm")),
+               esc(i18n.text(lang, "voice_cancel_btn")),
+               esc(csrf),
+               esc(i18n.text(lang, "voice_placeholder")),
+               esc(i18n.text(lang, "voice_placeholder")),
+               esc(i18n.text(lang, "voice_send"))))
+        voice_js = '<script src="/static/voice.js" defer></script>'
     if signed_in:
         header = '<div class="brand">Agentimo</div>%s%s%s%s' % (nav(lang, current), lang_switch(lang, csrf), signout_form(), voice_btn_header)
         body = body + voice_panel + voice_btn_fixed + voice_js
@@ -924,6 +950,12 @@ def validate_settings(lang, fields, form_locale):
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+STATIC_FILES = {
+    "/static/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/static/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
+}
+VOICE_PATHS = ("/voice/transcribe", "/voice/extract", "/voice/confirm", "/voice/cancel")
+MAX_AUDIO_BODY_BYTES = 16000 * 2 * 61 + 4096
 
 
 def application(environ, start_response):
@@ -1011,6 +1043,73 @@ def application(environ, start_response):
 
     def csrf_ok(fields):
         return fields.get("csrf_token", "") == session["csrf"]
+
+    def json_reply(status, data):
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        headers = [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Cache-Control", "no-store"),
+            ("Content-Security-Policy", "default-src 'self'"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("Content-Length", str(len(payload))),
+        ]
+        for cookie in new_cookies:
+            headers.append(("Set-Cookie", cookie))
+        start_response(status, headers)
+        return [payload]
+
+    def voice_route(route):
+        """Voice endpoints: JSON for the page script, a page without it."""
+        from app import voice_handlers as vh
+        query = read_query(environ)
+        as_json = query.get("format") == "json"
+        raw = None
+        if route == "/voice/transcribe":
+            try:
+                length = int(str(environ.get("CONTENT_LENGTH", "0") or 0).strip())
+            except (TypeError, ValueError):
+                length = 0
+            fields = dict(query)
+            if length < 0 or length > MAX_AUDIO_BODY_BYTES:
+                if csrf_ok(fields):
+                    refusal = {"state": "error", "lang": lang,
+                               "conversation_id": query.get("conversation_id", ""),
+                               "transcript": "",
+                               "message": i18n.text(lang, "voice_wav_error")}
+                    if as_json:
+                        return json_reply("200 OK", refusal)
+                    return respond("200 OK", page(
+                        lang, session["csrf"], i18n.text(lang, "voice_falar"),
+                        vh.html_body(refusal, session["csrf"]), signed_in=True))
+                return too_large()
+            raw = environ.get("wsgi.input").read(length) if length > 0 else b""
+        else:
+            fields = read_post_form()
+            if not isinstance(fields, dict):
+                return fields
+            as_json = as_json or fields.get("format") == "json"
+        if not csrf_ok(fields):
+            if as_json:
+                return json_reply("403 Forbidden", {
+                    "state": "error", "lang": lang, "conversation_id": "",
+                    "transcript": "", "message": i18n.text(lang, "refused_msg")})
+            return forbidden()
+        env = vh.make_env(DB_PATH, session, lang)
+        if route == "/voice/transcribe":
+            data = vh.handle_audio(env, fields, raw)
+        elif route == "/voice/extract":
+            data = vh.handle_text(env, fields)
+        elif route == "/voice/confirm":
+            data = vh.handle_confirm(env, fields)
+        else:
+            data = vh.handle_cancel(env, fields)
+        if as_json:
+            return json_reply("200 OK", data)
+        if data["state"] == "saved":
+            return redirect("/")
+        return respond("200 OK", page(
+            data["lang"], session["csrf"], i18n.text(data["lang"], "voice_falar"),
+            vh.html_body(data, session["csrf"]), signed_in=True))
 
     # ── Auth routes (before session gate: signin/verify are public) ──
     if path == "/signin" and method == "GET":
@@ -1105,15 +1204,16 @@ def application(environ, start_response):
                     '<p data-i18n="delete_done">%s</p>' % esc(i18n.text(lang, "delete_done")), signed_in=True)
         return respond("200 OK", body, [("Set-Cookie", clear)])
 
-    if path == "/static/style.css":
+    if path in STATIC_FILES:
+        filename, content_type = STATIC_FILES[path]
         try:
-            with open(os.path.join(STATIC_DIR, "style.css"), "rb") as handle:
+            with open(os.path.join(STATIC_DIR, filename), "rb") as handle:
                 data = handle.read()
         except OSError:
             start_response("404 Not Found", [("Content-Length", "0")])
             return [b""]
         headers = [
-            ("Content-Type", "text/css; charset=utf-8"),
+            ("Content-Type", content_type),
             ("Content-Security-Policy", "default-src 'self'"),
             ("X-Content-Type-Options", "nosniff"),
             ("Content-Length", str(len(data))),
@@ -1484,40 +1584,8 @@ def application(environ, start_response):
         store.delete_deal(DB_PATH, did, session["tenant_id"])
         return redirect("/")
 
-    if path == "/voice/transcribe" and method == "POST":
-        fields = read_post_form()
-        if not isinstance(fields, dict):
-            return fields
-        from app import voice_handlers as vh
-        return vh.handle_transcribe(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, application.__module__ and __import__("app.web", fromlist=["forbidden"]))
-    if path == "/voice/extract" and method == "POST":
-        fields = read_post_form()
-        if not isinstance(fields, dict):
-            return fields
-        from app import voice_handlers as vh
-        import app.web as web_mod
-        return vh.handle_turn(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
-    if path == "/voice/turn" and method == "POST":
-        fields = read_post_form()
-        if not isinstance(fields, dict):
-            return fields
-        from app import voice_handlers as vh
-        import app.web as web_mod
-        return vh.handle_turn(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
-    if path == "/voice/confirm" and method == "POST":
-        fields = read_post_form()
-        if not isinstance(fields, dict):
-            return fields
-        from app import voice_handlers as vh
-        import app.web as web_mod
-        return vh.handle_confirm(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
-    if path == "/voice/cancel" and method == "POST":
-        fields = read_post_form()
-        if not isinstance(fields, dict):
-            return fields
-        from app import voice_handlers as vh
-        import app.web as web_mod
-        return vh.handle_cancel(fields, session, lang, page, respond, csrf_ok, DB_PATH, store, i18n, web_mod)
+    if method == "POST" and path in VOICE_PATHS:
+        return voice_route(path)
 
     start_response("404 Not Found", [("Content-Length", str(len(b"Not found"))),
                                      ("Content-Security-Policy",

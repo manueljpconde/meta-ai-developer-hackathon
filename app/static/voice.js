@@ -148,7 +148,9 @@
   function render(d) {
     busy = false;
     if (d.conversation_id !== undefined) { convId.value = d.conversation_id; }
-    if (d.transcript !== undefined) { setText(transcriptEl, d.transcript); }
+    if (d.transcript !== undefined) {
+      setText(transcriptEl, d.understood ? d.transcript + "\n" + d.understood : d.transcript);
+    }
     var lang = d.lang || document.documentElement.lang || "pt-PT";
     if (d.state === "saved") { closePanel(true); return; }
     if (d.state === "cancelled") {
@@ -214,12 +216,20 @@
     if (rms > THRESHOLD) { speechSeen = true; silent = 0; } else { silent += data.length; }
     if (speechSeen && silent > SILENCE_SECONDS * rate) { finishListening(true); return; }
     if (total > MAX_SECONDS * rate) { finishListening(true); return; }
-    if (!speechSeen && total > NO_SPEECH_SECONDS * rate) { finishListening(false); }
+    if (!speechSeen && total > NO_SPEECH_SECONDS * rate) { finishListening(false); tapToAnswer(); }
+  }
+
+  // A browser that will not restart the microphone by itself shows one tap per answer.
+  function tapToAnswer() {
+    if (!questionEl.textContent) { setText(questionEl, panel.getAttribute("data-tap-answer")); }
   }
 
   function startRecording() {
     chunks = []; total = 0; speechSeen = false; silent = 0; listening = true;
-    if (ctx && ctx.state === "suspended" && ctx.resume) { ctx.resume(); }
+    if (ctx && ctx.state === "suspended" && ctx.resume) {
+      var resumed = ctx.resume();
+      if (resumed && resumed.catch) { resumed.catch(function () { listening = false; tapToAnswer(); }); }
+    }
   }
 
   function micBlocked() {
