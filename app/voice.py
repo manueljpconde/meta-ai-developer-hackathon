@@ -70,6 +70,25 @@ class ModelError(Exception):
     pass
 
 
+EXTRACTION_PROMPT = (
+    "An estate agent speaks or types one update, in Portuguese or English. "
+    "Reply with exactly one JSON object and nothing else. Keys: "
+    '"intent" ("update", or "question" when the agent asks something instead of reporting), '
+    '"language" ("pt" or "en", the language of the message), '
+    '"kind" (one of new_deal, cpcv_signed, escritura_date, fell_through, commission_received, '
+    "change_stage, change_commission, change_percentage, reopen). "
+    "Include only facts that were stated, never a guess: "
+    '"name" (new deal) or "deal" (an existing deal), "agency", '
+    '"commission" (agency commission in euros, excluding IVA), '
+    '"share" (the agent\'s own percentage), '
+    '"percentage" (a changed percentage), "amount" (euros received), '
+    '"stage" (potencial, provavel or confirmado), '
+    '"escritura_date" or "date" (YYYY-MM-DD when the day is said, YYYY-MM when only a month is said), '
+    '"cpcv_date". Leave out every key that was not stated. '
+    "Small transcription errors in names and numbers are tolerated."
+)
+
+
 class TranscriptionClient:
     """Live transcription client per criterion 9."""
     def __init__(self, api_key=None, api_base=None):
@@ -130,7 +149,7 @@ class ExtractionClient:
         payload = {
             "model": MODEL_NAME,
             "messages": [
-                {"role": "system", "content": "Extract update from the user message as JSON with intent, kind, fields and language pt or en. Reply with exactly one JSON object."},
+                {"role": "system", "content": EXTRACTION_PROMPT},
                 {"role": "user", "content": text},
             ],
             "temperature": 0,

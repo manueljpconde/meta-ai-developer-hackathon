@@ -1494,6 +1494,7 @@ def application(environ, start_response):
             "status": deal.get("status","active"),
             "stage": deal["stage"],
             "agency": deal["agency"],
+            "escritura_estimada": deal.get("escritura_estimada") or 0,
         }
         if fields := {}:  # keep linter happy, not used
             pass

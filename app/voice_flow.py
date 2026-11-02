@@ -239,27 +239,27 @@ def apply_aliases(conv):
         ex["name"] = ex["deal"]
 
 
-def fill_bare_number(conv, text):
-    """A bare number answers the one numeric field still missing.
+def fill_bare_number(conv, text, asked):
+    """A bare number answers the one numeric field that was asked for.
 
-    "40 %" is a share, "10 000 €" an amount; a number with no sign
-    answers only when exactly one numeric field is missing.
+    ``asked`` is what was missing before this turn. "40 %" is a share,
+    "10 000 €" an amount; a number with no sign answers only when
+    exactly one numeric field was asked, and only if the model's own
+    extraction left that field empty.
     """
     kind = conv.get("kind")
     ex = conv["extracted"]
     stripped = text.strip()
     if not re.fullmatch(r"[0-9][0-9.,\s\u00a0]*\s*(%|€|euros?)?", stripped, re.IGNORECASE):
         return
-    missing = [f for f in missing_for(kind, ex) if f in ("commission", "amount", "share", "percentage")]
-    rate_fields = [f for f in missing if f in ("share", "percentage")]
-    money_fields = [f for f in missing if f in ("commission", "amount")]
+    numeric = [f for f in asked if f in ("commission", "amount", "share", "percentage")]
     if stripped.endswith("%"):
-        candidates = rate_fields
+        candidates = [f for f in numeric if f in ("share", "percentage")]
     elif re.search(r"€|euro", stripped, re.IGNORECASE):
-        candidates = money_fields
+        candidates = [f for f in numeric if f in ("commission", "amount")]
     else:
-        candidates = missing
-    if len(candidates) != 1:
+        candidates = numeric
+    if len(candidates) != 1 or candidates[0] not in missing_for(kind, ex):
         return
     field = candidates[0]
     if field in ("share", "percentage"):

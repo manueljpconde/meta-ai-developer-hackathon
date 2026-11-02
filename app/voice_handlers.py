@@ -201,8 +201,9 @@ def _advance(env, conv, text):
     if kind is None:
         return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"))
     conv["kind"] = kind
+    asked = vf.missing_for(kind, conv["extracted"])
     vf.merge_extraction(conv, extracted)
-    vf.fill_bare_number(conv, text)
+    vf.fill_bare_number(conv, text, asked)
     deals = store.list_deals(env.db, tenant_id=env.tenant)
     active = [d for d in deals if d.get("status") != "fallen"]
     fallen = [d for d in deals if d.get("status") == "fallen"]
