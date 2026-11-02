@@ -260,6 +260,101 @@ class SharePercentageInputTest(VoiceTestCase):
             with self.subTest(raw=raw):
                 self.assertIsNone(voice_flow.parse_rate(raw))
 
+    def test_a_negative_share_written_in_words_is_never_a_rate(self):
+        for raw in ("minus 40", "Minus 40%", "negative 40", "negative 40 percent", "menos 40",
+                    "menos 40 por cento", "negativo 40", "negativa 40%", "40 negative", "(40)", "(40%)",
+                    "40-", "\u201340", "\u201440", "- 40", "minus 0.4", "less 40", "a loss of 40"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(voice_flow.parse_rate(raw))
+
+    def test_a_negative_share_written_in_words_is_asked_again_and_nothing_is_saved(self):
+        for raw, code, lang in (("minus 40", "en", "en-GB"), ("negative 40", "en", "en-GB"),
+                                ("menos 40", "pt", "pt-PT"), ("negativo 40 por cento", "pt", "pt-PT")):
+            with self.subTest(share=raw):
+                voice_flow.CONVERSATIONS.clear()
+                first = update("new_deal", code, name="Share check", stage="confirmado",
+                               escritura_date="2026-12-15", commission="10000", share=raw)
+                with stub_clients(ScriptedExtraction(first, update("new_deal", code))):
+                    token = self.page_token(lang)
+                    data = self.voice("/voice/extract", token, lang, text="x")
+                    self.assertEqual(data["state"], "ask", data)
+                    yes = self.voice("/voice/extract", token, lang, conversation_id=data["conversation_id"],
+                                     text="sim" if code == "pt" else "yes")
+                    self.assertNotEqual(yes["state"], "saved", yes)
+                    refused = self.voice("/voice/confirm", token, lang, conversation_id=data["conversation_id"])
+                    self.assertEqual(refused["state"], "error")
+                self.assertEqual(self.deals(), [])
+
+    def test_a_changed_percentage_written_as_a_negative_in_words_is_never_saved(self):
+        did = self.add_deal("T3 Benfica", commission=1000000, rate="0.4")
+        for raw in ("minus 45", "negative 45 percent", "menos 45"):
+            with self.subTest(percentage=raw):
+                voice_flow.CONVERSATIONS.clear()
+                extraction = ScriptedExtraction(update("change_percentage", "pt", deal="T3 Benfica", percentage=raw))
+                with stub_clients(extraction):
+                    token = self.page_token()
+                    data = self.voice("/voice/extract", token, text="x")
+                    self.assertEqual(data["state"], "ask", data)
+                    self.voice("/voice/confirm", token, conversation_id=data["conversation_id"])
+                deal = store.get_deal(self.db_path, did, self.tenant)
+                self.assertEqual((deal["share_rate_used"], deal["part_base"]), ("0.4", 400000))
+
+    def assert_said_negative_share_is_never_saved(self, said, code, page_lang):
+        """The extraction drops the sign and returns 40; the words still say negative."""
+        for extracted in ("40", "0.4", "40%", 40):
+            with self.subTest(said=said, extracted=extracted):
+                voice_flow.CONVERSATIONS.clear()
+                reply = update("new_deal", code, name="Share check", stage="confirmado",\
+                               escritura_date="2026-12-15", commission="10000", share=extracted)
+                with stub_clients(ScriptedExtraction(reply)):
+                    token = self.page_token(page_lang)
+                    data = self.voice("/voice/extract", token, page_lang, text=said)
+                    self.assertEqual(data["state"], "ask", data)
+                    refused = self.voice("/voice/confirm", token, page_lang, conversation_id=data["conversation_id"])
+                    self.assertNotEqual(refused["state"], "saved", refused)
+                self.assertEqual(self.deals(), [])
+
+    def test_minus_40_in_english_is_never_saved_as_a_positive_share(self):
+        self.assert_said_negative_share_is_never_saved("new T2, commission 10000, share minus 40, 15 December 2026", "en", "en-GB")
+
+    def test_negative_40_in_english_is_never_saved_as_a_positive_share(self):
+        self.assert_said_negative_share_is_never_saved("new T2, commission 10000, share negative 40 percent, 15 December 2026", "en", "en-GB")
+
+    def test_40_negative_in_english_is_never_saved_as_a_positive_share(self):
+        self.assert_said_negative_share_is_never_saved("new T2, commission 10000, share 40 negative, 15 December 2026", "en", "en-GB")
+
+    def test_menos_40_in_portuguese_is_never_saved_as_a_positive_share(self):
+        self.assert_said_negative_share_is_never_saved("novo T2, comissao 10000, percentagem menos 40, 15 de dezembro de 2026", "pt", "pt-PT")
+
+    def test_negativo_40_in_portuguese_is_never_saved_as_a_positive_share(self):
+        self.assert_said_negative_share_is_never_saved("novo T2, comissao 10000, percentagem negativo 40 por cento, 15 de dezembro de 2026", "pt", "pt-PT")
+
+    def test_40_negativo_in_portuguese_is_never_saved_as_a_positive_share(self):
+        self.assert_said_negative_share_is_never_saved("novo T2, comissao 10000, percentagem 40 negativo, 15 de dezembro de 2026", "pt", "pt-PT")
+
+    def test_each_negative_form_is_refused_in_the_other_language_too(self):
+        for said, code, page in (("minus 40", "en", "pt-PT"), ("menos 40", "pt", "en-GB"),
+                                 ("negative 40", "en", "pt-PT"), ("40 negativo", "pt", "en-GB")):
+            self.assert_said_negative_share_is_never_saved(said, code, page)
+
+    def test_a_negative_share_said_in_a_later_answer_replaces_nothing_and_is_asked_again(self):
+        for said, code, page in (("minus 40", "en", "en-GB"), ("menos 40", "pt", "pt-PT")):
+            with self.subTest(said=said):
+                voice_flow.CONVERSATIONS.clear()
+                first = update("new_deal", code, name="Share check", stage="confirmado",
+                               escritura_date="2026-12-15", commission="10000")
+                with stub_clients(ScriptedExtraction(first, update("new_deal", code, share="40"))):
+                    token = self.page_token(page)
+                    data = self.voice("/voice/extract", token, page, text="x")
+                    again = self.voice("/voice/extract", token, page, conversation_id=data["conversation_id"], text=said)
+                    self.assertEqual(again["state"], "ask", again)
+                self.assertEqual(self.deals(), [])
+
+    def test_ordinary_sentences_with_a_positive_share_are_still_read(self):
+        for said in ("share 40 percent", "at least 40", "pelo menos 40", "T3 - Benfica, 40%", "15-12-2026, 40%"):
+            with self.subTest(said=said):
+                self.assertFalse(voice_flow.says_negative_number(said))
+
     def test_a_negative_or_out_of_range_share_is_asked_again_and_nothing_is_saved(self):
         for raw in ("-40", "-40%", "150", "0"):
             with self.subTest(share=raw):

@@ -65,12 +65,41 @@ EN_MONTH_NAMES = ("january", "february", "march", "april", "may", "june",
 STOPWORDS = {"em", "de", "do", "da", "no", "na", "in", "the", "a", "o", "at"}
 
 
+# Words that may surround a share without changing its meaning. Any other
+# word (for example "minus", "negative", "menos") makes the share unusable.
+SHARE_FILLER = frozenset((
+    "a", "an", "o", "os", "as", "the", "of", "de", "do", "da", "is", "e", "it", "to", "at", "about",
+    "around", "cerca", "uns", "share", "my", "mine", "percentage", "percent", "per", "cent", "por",
+    "cento", "percentagem", "partilha", "fica", "make", "set", "i", "take", "get", "keep", "quero",
+    "para", "com", "ser", "with", "be", "me", "please", "favor", "now", "agora", "commission",
+    "comissao", "change", "mudar", "alterar", "sim", "yes", "eur", "euro", "euros", "rate"))
+
+
 def _plain(text):
     text = unicodedata.normalize("NFKD", str(text))
     return "".join(c for c in text if not unicodedata.combining(c)).lower()
 
 
 # ── Field normalisation ──────────────────────────────────────────
+
+_NEGATIVE_BEFORE = re.compile(
+    r"\b(?:minus|negative|negativo|negativa|menos|loss\s+of|perda\s+de)\b[\s:,]*"
+    r"(?:(?:a|an|of|de|um|uma)\s+)?[0-9a-z]")
+_NEGATIVE_AFTER = re.compile(
+    r"[0-9a-z]\s*(?:%|per\s*cent|percent|por\s*cento)?(?:\s+(?:is|e|fica))?\s*"
+    r"(?:negative|negativo|negativa|below\s+zero|abaixo\s+de\s+zero)\b")
+_NEGATIVE_MARK = re.compile(r"(?:^|[\s(])[-\u2212\u2013\u2014][0-9]|[0-9]%?[-\u2212\u2013\u2014]\s*$")
+
+
+def says_negative_number(text):
+    """True when what the agent said or typed puts a minus on a number:
+    "minus 40", "negative 40", "menos 40", "40 negativo", "-40"."""
+    if text is None:
+        return False
+    plain = _plain(text).replace("pelo menos", " ").replace("at least", " ").replace("no minimo", " ")
+    return bool(_NEGATIVE_BEFORE.search(plain) or _NEGATIVE_AFTER.search(plain)
+                or _NEGATIVE_MARK.search(plain))
+
 
 def parse_money(value):
     """Euros in any common spelling to integer cents, or None."""
@@ -110,12 +139,19 @@ def parse_rate(value):
         return None
     text = _plain(value)
     match = re.search(
-        r"([-\u2212]?)\s*([0-9]+(?:[.,][0-9]+)?)\s*(%|por\s*cento|per\s*cent|percent)?", text)
+        r"([0-9]+(?:[.,][0-9]+)?)\s*(%|por\s*cento|per\s*cent|percent)?", text)
     if not match:
         return None
-    sign, digits, marker = match.groups()
-    if sign:
-        return None  # a negative share is refused, never read as positive
+    digits, marker = match.groups()
+    # Anything around the number must be plain filler. A sign, a dash of any
+    # kind, brackets, a second number or a word such as "minus", "menos" or
+    # "negative" means the value is not a plain share: it is refused and the
+    # field is asked again, never read as positive.
+    around = text[:match.start()] + " " + text[match.end():]
+    if re.search(r"[^a-z\s.,:;!?'\"]", around):
+        return None
+    if any(word not in SHARE_FILLER for word in re.findall(r"[a-z]+", around)):
+        return None
     try:
         number = Decimal(digits.replace(",", "."))
     except InvalidOperation:
@@ -204,11 +240,13 @@ def _clean_text(value):
     return text[:200] if text else None
 
 
-def merge_extraction(conv, extracted):
+def merge_extraction(conv, extracted, said=None):
     """Fold one extraction into the conversation, normalised.
 
     Only stated facts replace what is there; an unusable value is
-    ignored so the field simply stays missing.
+    ignored so the field simply stays missing. ``said`` is what the agent
+    actually said or typed: when it puts a minus on a number, a share given
+    in this turn is refused whatever the extraction returned, and asked again.
     """
     ex = conv["extracted"]
     kind = conv.get("kind")
@@ -228,6 +266,8 @@ def merge_extraction(conv, extracted):
     for key, raw in (("share", extracted.get("share", extracted.get("share_rate"))),
                      ("percentage", extracted.get("percentage"))):
         rate = parse_rate(raw)
+        if rate is not None and says_negative_number(said):
+            rate = None  # "minus 40" said and 40 extracted is still a negative share
         if rate is not None:
             ex[key] = rate
         elif raw not in (None, ""):
