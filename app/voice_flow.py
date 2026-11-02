@@ -108,14 +108,21 @@ def parse_rate(value):
     """A share as an exact decimal rate string ("40 %" -> "0.4"), or None."""
     if value is None or isinstance(value, bool):
         return None
-    match = re.search(r"[0-9]+(?:[.,][0-9]+)?", str(value))
+    text = _plain(value)
+    match = re.search(
+        r"([-\u2212]?)\s*([0-9]+(?:[.,][0-9]+)?)\s*(%|por\s*cento|per\s*cent|percent)?", text)
     if not match:
         return None
+    sign, digits, marker = match.groups()
+    if sign:
+        return None  # a negative share is refused, never read as positive
     try:
-        number = Decimal(match.group(0).replace(",", "."))
+        number = Decimal(digits.replace(",", "."))
     except InvalidOperation:
         return None
-    if number > 1:
+    # A number marked as a percentage is always one: "1%" is 1 %, not 100 %.
+    # Unmarked, 1 or more is a percentage and below 1 is already a rate.
+    if marker or number >= 1:
         number = number / 100
     if number <= 0 or number > 1:
         return None
@@ -158,16 +165,38 @@ def parse_date(value):
         return text + "-15", True
     plain = _plain(text)
     year, month_now = current_year_month()
+    numeric = re.fullmatch(r"([0-9]{1,2})[/.\-]([0-9]{1,2})[/.\-]([0-9]{4})", plain)
+    if numeric:
+        return _exact(int(numeric.group(3)), int(numeric.group(2)), int(numeric.group(1)))
     for names in (PT_MONTH_NAMES, EN_MONTH_NAMES):
         for index, name in enumerate(names):
-            if re.search(r"\b%s\b" % name, plain):
-                explicit = re.search(r"\b(20[0-9]{2})\b", plain)
+            if not re.search(r"\b%s\b" % name, plain):
+                continue
+            explicit = re.search(r"\b(20[0-9]{2})\b", plain)
+            rest = re.sub(r"\b20[0-9]{2}\b", " ", plain)
+            day = (re.search(r"\b([0-9]{1,2})(?:st|nd|rd|th|o|\u00ba)?\s*(?:de\s+|of\s+)?%s\b" % name, rest)
+                   or re.search(r"\b%s\s+(?:the\s+)?([0-9]{1,2})(?:st|nd|rd|th)?\b" % name, rest))
+            if day:
+                # An exact day stays exact. Without a year it is the next occurrence.
                 if explicit:
                     use_year = int(explicit.group(1))
                 else:
                     use_year = year + (1 if index + 1 < month_now else 0)
-                return "%04d-%02d-15" % (use_year, index + 1), True
+                return _exact(use_year, index + 1, int(day.group(1)))
+            if explicit:
+                use_year = int(explicit.group(1))
+            else:
+                use_year = year + (1 if index + 1 < month_now else 0)
+            return "%04d-%02d-15" % (use_year, index + 1), True
     return None, False
+
+
+def _exact(year, month, day):
+    try:
+        datetime(year, month, day)
+    except ValueError:
+        return None, False
+    return "%04d-%02d-%02d" % (year, month, day), False
 
 
 def _clean_text(value):
@@ -201,6 +230,8 @@ def merge_extraction(conv, extracted):
         rate = parse_rate(raw)
         if rate is not None:
             ex[key] = rate
+        elif raw not in (None, ""):
+            ex.pop(key, None)  # a stated but unusable share is asked again, never kept
     stage = parse_stage(extracted.get("stage"))
     if stage:
         ex["stage"] = stage

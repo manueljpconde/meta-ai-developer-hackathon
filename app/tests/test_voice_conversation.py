@@ -226,6 +226,109 @@ class StopsTest(VoiceTestCase):
         self.assertFalse(store.voice_limit_reached(self.db_path, self.tenant))
 
 
+class SharePercentageInputTest(VoiceTestCase):
+    """A percentage is read as a percentage; a bad share is asked again, never saved."""
+
+    def new_deal(self, share, code="en"):
+        return ScriptedExtraction(update("new_deal", code, name="Share check", stage="confirmado",
+                                         escritura_date="2026-12-15", commission="10000", share=share))
+
+    def test_one_percent_is_one_percent_not_a_hundred(self):
+        for raw in ("1%", "1 %", "1 percent", "1 por cento", "1"):
+            with self.subTest(share=raw):
+                voice_flow.CONVERSATIONS.clear()
+                for deal in self.deals():
+                    store.delete_deal(self.db_path, deal["id"], self.tenant)
+                with stub_clients(self.new_deal(raw)):
+                    token = self.page_token("en-GB")
+                    data = self.voice("/voice/extract", token, "en-GB", text="x")
+                    self.assertEqual(data["state"], "confirm", data)
+                    self.assertIn(", 1%,", data["readback"])
+                    self.assertIn("your share €100,", data["readback"])
+                    self.voice("/voice/confirm", token, "en-GB", conversation_id=data["conversation_id"])
+                [deal] = self.deals()
+                self.assertEqual((deal["share_rate_used"], deal["part_base"]), ("0.01", 10000))
+
+    def test_a_percentage_sign_always_means_percent_and_a_plain_rate_is_kept(self):
+        for raw, rate in (("40%", "0.4"), ("40", "0.4"), ("0.4", "0.4"), ("0,5%", "0.005"), ("100%", "1"),
+                          ("12.5 percent", "0.125")):
+            with self.subTest(raw=raw):
+                self.assertEqual(voice_flow.parse_rate(raw), rate)
+
+    def test_a_negative_or_out_of_range_share_is_never_a_rate(self):
+        for raw in ("-40", "\u221240", "-1%", "0", "0%", "101%", "150", "1000", "abc", True):
+            with self.subTest(raw=raw):
+                self.assertIsNone(voice_flow.parse_rate(raw))
+
+    def test_a_negative_or_out_of_range_share_is_asked_again_and_nothing_is_saved(self):
+        for raw in ("-40", "-40%", "150", "0"):
+            with self.subTest(share=raw):
+                voice_flow.CONVERSATIONS.clear()
+                with stub_clients(self.new_deal(raw)):
+                    token = self.page_token("en-GB")
+                    data = self.voice("/voice/extract", token, "en-GB", text="x")
+                    self.assertEqual(data["state"], "ask", data)
+                    early = self.voice("/voice/confirm", token, "en-GB", conversation_id=data["conversation_id"])
+                    self.assertEqual(early["state"], "error")
+                self.assertEqual(self.deals(), [])
+
+    def test_a_valid_share_after_a_refused_one_is_saved_as_given(self):
+        extraction = ScriptedExtraction(
+            update("new_deal", "en", name="Share retry", stage="confirmado", escritura_date="2026-12-15",
+                   commission="10000", share="-40"),
+            update("new_deal", "en", share="40"))
+        with stub_clients(extraction):
+            token = self.page_token("en-GB")
+            first = self.voice("/voice/extract", token, "en-GB", text="x")
+            self.assertEqual(first["state"], "ask")
+            second = self.voice("/voice/extract", token, "en-GB", conversation_id=first["conversation_id"],
+                                text="40 percent")
+            self.assertEqual(second["state"], "confirm", second)
+            self.assertIn("40%", second["readback"])
+            self.voice("/voice/confirm", token, "en-GB", conversation_id=second["conversation_id"])
+        self.assertEqual([d["share_rate_used"] for d in self.deals()], ["0.4"])
+
+    def test_a_refused_share_replaces_a_share_kept_earlier(self):
+        extraction = ScriptedExtraction(
+            update("new_deal", "en", name="Share swap", stage="confirmado", escritura_date="2026-12-15",
+                   commission="10000", share="40"),
+            update("new_deal", "en", share="-40"))
+        with stub_clients(extraction):
+            token = self.page_token("en-GB")
+            first = self.voice("/voice/extract", token, "en-GB", text="x")
+            self.assertEqual(first["state"], "confirm")
+            second = self.voice("/voice/extract", token, "en-GB", conversation_id=first["conversation_id"],
+                                text="make it minus 40")
+            self.assertEqual(second["state"], "ask", second)
+            self.voice("/voice/confirm", token, "en-GB", conversation_id=second["conversation_id"])
+        self.assertEqual(self.deals(), [])
+
+    def test_a_changed_percentage_that_is_negative_or_too_large_is_never_saved(self):
+        did = self.add_deal("T3 Benfica", commission=1000000, rate="0.4")
+        for raw in ("-45%", "150%"):
+            with self.subTest(percentage=raw):
+                voice_flow.CONVERSATIONS.clear()
+                extraction = ScriptedExtraction(update("change_percentage", "pt", deal="T3 Benfica", percentage=raw))
+                with stub_clients(extraction):
+                    token = self.page_token()
+                    data = self.voice("/voice/extract", token, text="x")
+                    self.assertEqual(data["state"], "ask", data)
+                    self.voice("/voice/confirm", token, conversation_id=data["conversation_id"])
+                deal = store.get_deal(self.db_path, did, self.tenant)
+                self.assertEqual((deal["share_rate_used"], deal["part_base"]), ("0.4", 400000))
+
+    def test_a_changed_percentage_of_one_percent_is_one_percent(self):
+        did = self.add_deal("T3 Benfica", commission=1000000, rate="0.4")
+        extraction = ScriptedExtraction(update("change_percentage", "pt", deal="T3 Benfica", percentage="1%"))
+        with stub_clients(extraction):
+            token = self.page_token()
+            data = self.voice("/voice/extract", token, text="x")
+            self.assertEqual(data["state"], "confirm", data)
+            self.voice("/voice/confirm", token, conversation_id=data["conversation_id"])
+        deal = store.get_deal(self.db_path, did, self.tenant)
+        self.assertEqual((deal["share_rate_used"], deal["part_base"]), ("0.01", 10000))
+
+
 class EstimatedDateTest(VoiceTestCase):
     def test_month_only_is_stored_as_the_15th_estimated_and_counts_in_the_forecast(self):
         extraction = ScriptedExtraction(update(
@@ -260,6 +363,39 @@ class EstimatedDateTest(VoiceTestCase):
             data = self.voice("/voice/extract", token, text="x")
             self.voice("/voice/confirm", token, conversation_id=data["conversation_id"])
         self.assertEqual(self.deals()[0]["escritura_estimada"], 0)
+
+    def test_an_exact_date_with_a_day_keeps_its_day_and_is_stored_as_exact(self):
+        cases = (("en-GB", "en", "15 March 2027", "Mar 15", "2027-03-15"),
+                 ("en-GB", "en", "March 15th, 2027", "Mar 15", "2027-03-15"),
+                 ("pt-PT", "pt", "15 de março de 2027", "15 mar 2027", "2027-03-15"),
+                 ("pt-PT", "pt", "15/03/2027", "15 mar 2027", "2027-03-15"),
+                 ("en-GB", "en", "1st of April 2027", "Apr 1", "2027-04-01"))
+        for page_lang, code, raw, shown, iso in cases:
+            with self.subTest(date=raw):
+                voice_flow.CONVERSATIONS.clear()
+                for deal in self.deals():
+                    store.delete_deal(self.db_path, deal["id"], self.tenant)
+                extraction = ScriptedExtraction(update(
+                    "new_deal", code, name="Exact day", stage="confirmado", commission="10000", share="40",
+                    escritura_date=raw))
+                with stub_clients(extraction):
+                    token = self.page_token(page_lang)
+                    data = self.voice("/voice/extract", token, page_lang, text="x")
+                    self.assertEqual(data["state"], "confirm", data)
+                    self.assertIn(shown, data["readback"])
+                    for word in ("estimat", "mid-", "meados"):
+                        self.assertNotIn(word, data["readback"])
+                    self.voice("/voice/confirm", token, page_lang, conversation_id=data["conversation_id"])
+                [deal] = self.deals()
+                self.assertEqual((deal["escritura_date"], deal["escritura_estimada"]), (iso, 0))
+
+    def test_parse_date_keeps_a_day_exact_and_a_month_alone_estimated(self):
+        self.assertEqual(voice_flow.parse_date("15 March 2027"), ("2027-03-15", False))
+        self.assertEqual(voice_flow.parse_date("march 3 2027"), ("2027-03-03", False))
+        self.assertEqual(voice_flow.parse_date("2027-03-15"), ("2027-03-15", False))
+        self.assertEqual(voice_flow.parse_date("March 2027"), ("2027-03-15", True))
+        self.assertEqual(voice_flow.parse_date("2027-03"), ("2027-03-15", True))
+        self.assertEqual(voice_flow.parse_date("31 February 2027"), (None, False))
 
     def test_a_later_exact_date_by_voice_clears_the_flag(self):
         did = self.add_deal("T3 Benfica", date="2027-03-15", estimated=1)
