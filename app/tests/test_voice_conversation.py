@@ -285,6 +285,35 @@ class EstimatedDateTest(VoiceTestCase):
         deal = store.get_deal(self.db_path, did, self.tenant)
         self.assertEqual((deal["escritura_date"], deal["escritura_estimada"]), ("2027-03-20", 0))
 
+    def test_the_deal_form_has_the_estimated_date_checkbox_in_both_languages(self):
+        for lang, label in (("pt-PT", "Data estimada"), ("en-GB", "Estimated date")):
+            body = self.client.get("/deals/new", accept_language=lang).body
+            self.assertRegex(body, r'<input type="checkbox" name="escritura_estimada" value="1"> %s' % label)
+
+    def test_estimated_deals_show_the_marker_in_the_table_and_the_cards(self):
+        self.add_deal("T5 Estimated", date="2026-12-15", estimated=1)
+        self.add_deal("T5 Exact", date="2026-12-16", estimated=0)
+        for lang, marker in (("pt-PT", "(estimada)"), ("en-GB", "(estimated)")):
+            body = self.client.get("/?month=2026-12", accept_language=lang).body
+            row = re.search(r'<tr class="deal-row">(?:(?!</tr>).)*T5 Estimated.*?</tr>', body).group(0)
+            card = re.search(r'<article class="deal-card">(?:(?!</article>).)*T5 Estimated.*?</article>', body).group(0)
+            self.assertIn(marker, row)
+            self.assertIn(marker, card)
+            exact_row = re.search(r'<tr class="deal-row">(?:(?!</tr>).)*T5 Exact.*?</tr>', body).group(0)
+            self.assertNotIn(marker, exact_row)
+
+    def test_the_form_can_save_an_estimated_date_without_voice(self):
+        body = self.client.get("/deals/new").body
+        params = {"csrf_token": csrf_token(body), "name": "T6 Form Est", "commission": "10000,00", "share": "40",
+                  "escritura_date": "2026-12-15", "month": "2026-12", "stage": "confirmado", "agency": "",
+                  "form_locale": "pt-PT", "escritura_estimada": "1"}
+        review = self.client.post("/deals/review", params)
+        hidden = dict(re.findall(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', review.body))
+        self.assertEqual(hidden.get("escritura_estimada"), "1")
+        hidden["csrf_token"] = csrf_token(review.body)
+        self.assertEqual(self.client.post("/deals/confirm", hidden).code, 303)
+        self.assertEqual(self.deals()[0]["escritura_estimada"], 1)
+
     def test_a_deal_is_never_saved_without_a_date(self):
         extraction = ScriptedExtraction(update("new_deal", "pt", name="T1 NoDate", stage="provavel",
                                                commission="9000", share="40"))

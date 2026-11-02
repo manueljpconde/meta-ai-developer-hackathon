@@ -636,7 +636,7 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
         '<input type="hidden" name="%s" value="%s">'
         % (name, hidden_value(fields.get(name, "")))
         for name in ("name", "commission", "share", "escritura_date", "cpcv_date", "stage", "status",
-                     "agency", "form_locale")
+                     "agency", "form_locale", "escritura_estimada")
     )
     shown = "".join(
         '<input type="hidden" name="shown_%s" value="%d">'
@@ -1384,6 +1384,7 @@ def application(environ, start_response):
             "stage": parsed["stage"],
             "status": parsed.get("status", "active"),
             "agency": parsed["agency"],
+            "escritura_estimada": "1" if fields.get("escritura_estimada") else "",
             "form_locale": form_locale,
         }
         body = page(lang, session["csrf"], i18n.text(lang, "rev_title"),
@@ -1397,7 +1398,7 @@ def application(environ, start_response):
             return fields
         if "shown_share" in fields and "idempotency_key" in fields:
             for name in ("name", "commission", "share", "escritura_date", "cpcv_date", "stage", "status",
-                         "agency", "form_locale"):
+                         "agency", "form_locale", "escritura_estimada"):
                 fields[name] = unquote(fields.get(name, ""))
         if not csrf_ok(fields):
             return forbidden()
@@ -1446,6 +1447,7 @@ def application(environ, start_response):
                 "stage": parsed["stage"],
                 "status": parsed.get("status","active"),
                 "agency": parsed["agency"],
+                "escritura_estimada": "1" if fields.get("escritura_estimada") else "",
                 "form_locale": form_locale,
             }
             body = page(
@@ -1471,6 +1473,7 @@ def application(environ, start_response):
             "ss_rate": settings["ss_rate"],
             "expenses_cents": settings["expenses_cents"],
             "idempotency_key": fields.get("idempotency_key", ""),
+            "escritura_estimada": 1 if fields.get("escritura_estimada") else 0,
         }, tenant_id=session["tenant_id"])
         return redirect("/?month=" + parsed["month"])
 
