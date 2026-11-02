@@ -224,41 +224,70 @@ Chosen (b) per the owner's answer A2: one date field means the
 card and the forecast can never disagree about when the money
 moves.
 
-## D5. The update box and the confirmation gate
+## D5. The voice conversation and the confirmation gate
 
-Decision: one box on the main page. The agent records a voice note
-in the browser or types text in either language; typed input stays
-fully available, so a missing microphone or a noisy street never
-blocks the update. Speech becomes text through Meta transcription
-(`muse-voice-transcribe-1.0`); a Muse model turns the text (or the
-typed message) into the structured change, returning stated facts
-only and nothing for what was not stated. When something is
-missing or ambiguous, the product asks one question instead of
-guessing; each answer is reinterpreted, one question at a time,
-and the agent can always correct the fields directly instead of
-answering.
+Decision: one "Falar" / "Speak" button is the only entry point to every
+AI feature, on every signed-in page: a large round microphone button
+fixed at the bottom right on phones (it never covers the content's last
+line), a "Falar" button with the microphone icon in the header from
+1024 px, next to PT | EN. One tap opens a panel that rises from the
+bottom over the current page (half height on phones) and starts the
+conversation; after that the agent never needs to touch the screen. The
+panel is closed on every page load and shows what was heard, the one
+question or the one-line read-back, a text box for typing, and
+Confirmar / Cancelar. Confirmar shows only when there is something to
+confirm. The page underneath is never replaced; it refreshes once the
+conversation has saved, been cancelled or stopped.
 
-Before anything is saved, a confirmation card shows the extracted
-fields (editable) with the forecast before and after, computed by
-the deterministic engine on the proposed values. Nothing is saved
-without Confirm. A transcription or model failure is an error,
-never a guess: the message says so, the typed and manual form
-path stays open, and nothing stored changes. Audio is deleted
-after transcription; the transcript and the confirmed change are
-kept with the deal's history. Every euro shown comes from the
-existing deterministic engine on confirmed fields; model output
-never enters the money path.
+Rules for every AI feature (A0): Agentimo never speaks first (no
+greeting, no prompt, no tip anywhere); it speaks only to ask for what it
+needs or to answer. It takes the shortest path: it asks for all missing
+fields in one question ("Qual é a comissão e a tua percentagem?"), never
+one per turn, then listens again by itself. The answer fills the fields
+asked and the rest of the update is kept. Which fields are missing is
+decided in app code, per kind of update, never by the model.
 
-Options considered: (a) save on send with undo; (b) confirm
-before saving. Chosen (b): money records need an explicit human
-decision, and the before/after card is the moment the agent sees
-what an update really earns them. Options for ambiguity: (a) a
-full correction form up front; (b) one question at a time with the
-fields always editable. Chosen (b): voice is fastest when one
-answer completes the update, while the editable card keeps full
-control for the cases a question cannot resolve.
+Every change needs one confirmation, kept minimal: a one-line read-back
+of the key facts, including the agent's share computed by the engine
+("T3 Benfica, 10 000 €, 40 %, a tua parte 4 000 €, escritura 15 dez.
+Confirmas?" / "Do you confirm?"). A single "sim" / "yes", or the
+Confirmar button, saves; those are the only two ways. "não" / "no", or a
+correction, changes the named field and reads the update back again.
+Nothing is stored before that yes. A conversation stops after 6
+questions without completing, or on "cancelar" / "cancel"; it saves
+nothing and the screen shows what was understood so far. There are at
+most 30 conversations per agent per day; over the limit the answer is
+refused without a model call, in the page language.
 
-Item 4 voice (Nov 2026, on main after item 3c): hands-free conversation started by one Speak entry point on every signed-in page (fixed round button on phones, header at 1024 px), bottom panel with transcript/question/confirmation card and typed box, six-question limit or cancel stops with no save, deterministic missing-field questions in app code, single yes saves (voice or button), five updates plus stage/commission/reopen and estimated-date flag; language follows agent speech via muse-spark-1.3 language field.
+Voice and text are one conversation: the same panel runs on a text box
+when the agent cannot speak or the microphone is blocked, and the
+questions appear on screen either way. The extraction returns an
+"intent" of "update" or "question"; in this item a question gets the
+short reply "Ainda não sei responder a perguntas." / "I can't answer
+questions yet." and saves nothing (money questions will use the same
+button later). Agentimo answers in the language the agent speaks: the
+model returns "language" (pt or en) with each extraction and the
+questions, read-back and speech follow it; a short answer such as "sim"
+or "40" keeps the conversation's language; the page language is only
+the starting point.
+
+A transcription or model failure is an error, never a guess: the message
+says so, the typed path stays open and nothing stored changes. No audio
+survives the request; the transcript and the confirmed change are kept.
+Every euro shown comes from the deterministic engine on confirmed
+fields; model output never enters the money path.
+
+The empty-page line that suggested a voice note (owner answer A4) is
+retired by rule A0: no tip appears anywhere.
+
+Options considered: (a) save on send with undo; (b) confirm before
+saving. Chosen (b): money records need an explicit human decision, and
+a spoken yes is the lightest one. Options for entry: (a) a box on the
+main page only; (b) one button on every page. Chosen (b): the agent is
+often driving or between viewings and must reach it from anywhere.
+Options for ambiguity: (a) a full correction form up front; (b) one
+question for everything missing. Chosen (b): voice is fastest when one
+answer completes the update.
 
 ## D6. Forecast, scenarios, and history keep their meaning
 
@@ -349,7 +378,20 @@ request page, applied above:
   and D4, checked by criterion 10.
 - A2. Escritura date: its own date (day, month, year); the
   forecast month derives from it. Applied in Terminology, D4 and
-  D6, checked by criterion 11.
+  D6, checked by criterion 11. Item 4 adds that the date may be
+  estimated: Agentimo is a cash-flow forecast, so every deal has an
+  escritura date, exact or estimated, and nothing is saved without
+  one. An exact date said is stored as exact. When only a month is
+  given (\"deve ser em março\") the date is the 15th of that month
+  and the deal's \"escritura estimada\" flag is set; when no date is
+  given Agentimo asks \"Qual é a data da escritura, mesmo
+  aproximada?\" / \"When is the escritura, even roughly?\". Cards, the
+  table and the read-back show \"(estimada)\" / \"(estimated)\" and the
+  read-back says \"meados de março\" / \"mid-March\". Giving the real
+  date later, by voice or on the form, clears the flag. The deal form
+  has a \"Data estimada\" / \"Estimated date\" checkbox so the same
+  works without voice. Estimated deals count in their month's
+  forecast like any other deal.
 - A3. Deals that fell through: a separate collapsed Caidos list,
   excluded from the forecast, reopenable. Applied in Terminology,
   D4 and D6, checked by criterion 12.
