@@ -202,8 +202,19 @@ def _advance(env, conv, text):
         return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"))
     conv["kind"] = kind
     asked = vf.missing_for(kind, conv["extracted"])
-    vf.merge_extraction(conv, extracted, said=text)
+    correcting = conv.get("read_back_once", False)
+    before = dict(conv["extracted"])
+    supplied = vf.merge_extraction(conv, extracted, said=text)
     vf.fill_bare_number(conv, text, asked)
+    if correcting:
+        # After a read-back every answer is a correction. A field the agent
+        # named but gave no usable value for is forgotten, so the old value
+        # is never read back as if nothing had been said.
+        supplied |= {k for k, v in conv["extracted"].items() if before.get(k) != v}
+        named = [f for f in vf.fields_named(text, kind) if f not in supplied]
+        vf.forget_fields(conv["extracted"], named)
+        if not supplied and not named:
+            return _ask(conv, _t(lang, "voice_what_to_fix"))
     deals = store.list_deals(env.db, tenant_id=env.tenant)
     active = [d for d in deals if d.get("status") != "fallen"]
     fallen = [d for d in deals if d.get("status") == "fallen"]
@@ -213,6 +224,7 @@ def _advance(env, conv, text):
     if outcome.action == "stop":
         return _end(conv, "ended", lang, outcome.text)
     conv["state"] = "confirm"
+    conv["read_back_once"] = True
     conv["readback"] = outcome.text
     conv["share_cents"] = outcome.mine_cents
     return _payload(conv, "confirm", lang, readback=outcome.text)

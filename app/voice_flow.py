@@ -101,6 +101,72 @@ def says_negative_number(text):
                 or _NEGATIVE_MARK.search(plain))
 
 
+_EXACT_WORD = re.compile(r"\b(?:exact|exactly|exata|exato|exatamente)\b")
+_NOT_EXACT = re.compile(r"\b(?:not|nao|nunca|never)\s+(?:\w+\s+)?(?:exact|exactly|exata|exato|exatamente)\b"
+                        r"|\b(?:inexact|inexata|inexato)\b")
+
+
+def _truthy(value):
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "sim", "y", "s")
+    return bool(value)
+
+
+def says_exact_date(text, iso):
+    """True when the agent's own words make this date exact: the word
+    "exact" / "exata", or a full day, month and year equal to the date."""
+    if not text:
+        return False
+    plain = _plain(text).replace("'", "")
+    if _EXACT_WORD.search(plain) and not _NOT_EXACT.search(plain):
+        return True
+    for match in re.finditer(r"\b([0-9]{1,2})[/.\-]([0-9]{1,2})[/.\-]([0-9]{4})\b", plain):
+        if _exact(int(match.group(3)), int(match.group(2)), int(match.group(1)))[0] == iso:
+            return True
+    for names in (PT_MONTH_NAMES, EN_MONTH_NAMES):
+        for index, name in enumerate(names):
+            patterns = (
+                r"\b([0-9]{1,2})(?:st|nd|rd|th|o|\u00ba)?\s*(?:de\s+|of\s+)?%s\s*(?:de\s+|,\s*)?(20[0-9]{2})\b" % name,
+                r"\b%s\s+(?:the\s+)?([0-9]{1,2})(?:st|nd|rd|th)?\s*,?\s*(?:de\s+)?(20[0-9]{2})\b" % name,
+            )
+            for pattern in patterns:
+                for found in re.finditer(pattern, plain):
+                    if _exact(int(found.group(2)), index + 1, int(found.group(1)))[0] == iso:
+                        return True
+    return False
+
+
+# The words that say which field a correction is about.
+CORRECTION_WORDS = (
+    (r"\b(?:share|percent|percentage|percentagem|cento|parte)\b|%", ("share", "percentage")),
+    (r"\b(?:commission|comissao)\b", ("commission",)),
+    (r"\b(?:amount|valor|quantia)\b", ("amount",)),
+    (r"\b(?:euro|euros|eur)\b|\u20ac", ("commission", "amount")),
+    (r"\b(?:date|data|escritura|cpcv)\b|\b(?:%s)\b" % "|".join(PT_MONTH_NAMES + EN_MONTH_NAMES),
+     ("escritura_date", "date")),
+    (r"\b(?:stage|estado|fase|potencial|potential|provavel|likely|probable|confirmado|confirmed)\b", ("stage",)),
+)
+
+
+def fields_named(text, kind):
+    """The required fields of this kind that the words of a correction name."""
+    plain = _plain(text or "")
+    named = []
+    for pattern, keys in CORRECTION_WORDS:
+        if re.search(pattern, plain):
+            named.extend(key for key in keys if key in REQUIRED.get(kind, ()) and key not in named)
+    return named
+
+
+def forget_fields(ex, fields):
+    """Drop fields the agent corrected without giving a usable value, so
+    the old value is never read back and the field is asked again."""
+    for field in fields:
+        ex.pop(field, None)
+        if field in ("escritura_date", "date"):
+            ex.pop("escritura_estimada", None)
+
+
 def parse_money(value):
     """Euros in any common spelling to integer cents, or None."""
     if value is None or isinstance(value, bool):
@@ -250,19 +316,24 @@ def merge_extraction(conv, extracted, said=None):
     """
     ex = conv["extracted"]
     kind = conv.get("kind")
+    supplied = set()
+    flagged = _truthy(extracted.get("escritura_estimada"))
     for key in ("name", "deal", "agency"):
         if extracted.get(key) not in (None, ""):
             cleaned = _clean_text(extracted[key])
             if cleaned:
                 ex[key] = cleaned
+                supplied.add(key)
     cents_given = extracted.get("agency_commission_cents")
     if (isinstance(cents_given, int) and not isinstance(cents_given, bool)
             and cents_given > 0 and extracted.get("commission") in (None, "")):
         ex["commission"] = cents_given
+        supplied.add("commission")
     for key in ("commission", "amount"):
         cents = parse_money(extracted.get(key))
         if cents is not None:
             ex[key] = cents
+            supplied.add(key)
     for key, raw in (("share", extracted.get("share", extracted.get("share_rate"))),
                      ("percentage", extracted.get("percentage"))):
         rate = parse_rate(raw)
@@ -270,12 +341,13 @@ def merge_extraction(conv, extracted, said=None):
             rate = None  # "minus 40" said and 40 extracted is still a negative share
         if rate is not None:
             ex[key] = rate
+            supplied.add(key)
         elif raw not in (None, ""):
             ex.pop(key, None)  # a stated but unusable share is asked again, never kept
     stage = parse_stage(extracted.get("stage"))
     if stage:
         ex["stage"] = stage
-    flagged = bool(extracted.get("escritura_estimada"))
+        supplied.add("stage")
     for key in ("escritura_date", "date", "cpcv_date"):
         if extracted.get(key) in (None, ""):
             continue
@@ -285,9 +357,15 @@ def merge_extraction(conv, extracted, said=None):
         if estimated and key in ("date", "cpcv_date") and kind != "escritura_date":
             continue  # a CPCV or a receipt needs the exact day
         ex[key] = iso
+        supplied.add(key)
         if key == "escritura_date" or (key == "date" and kind == "escritura_date"):
-            ex["escritura_estimada"] = 1 if (estimated or flagged) else 0
+            # What the agent says beats extraction's flag: a date said as exact
+            # or in full (day, month and year) is exact. Only a month alone is
+            # estimated.
+            keep_flag = flagged and not (not estimated and says_exact_date(said, iso))
+            ex["escritura_estimada"] = 1 if (estimated or keep_flag) else 0
     apply_aliases(conv)
+    return supplied
 
 
 def apply_aliases(conv):

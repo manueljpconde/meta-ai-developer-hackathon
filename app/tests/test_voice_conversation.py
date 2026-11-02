@@ -849,3 +849,186 @@ class SpokenConversationTest(VoiceTestCase):
             data = self.post_audio(self.page_token(), make_wav(75))
         self.assertEqual(data["state"], "error")
         self.assertEqual(extraction.calls, [])
+
+
+class CorrectionIsNeverLostTest(VoiceTestCase):
+    """Criterion (15): after a read-back, a correction changes the named field or asks for it again."""
+
+    def read_back(self, code, page_lang, *more, share="40"):
+        """Start a new-deal conversation that reaches the read-back; ``more`` are later extractions."""
+        first = update("new_deal", code, name="T3 Benfica", stage="confirmado", escritura_date="2026-12-15",
+                       commission="10000", share=share)
+        return ScriptedExtraction(first, *more)
+
+    def assert_nothing_saved(self, token, page_lang, cid):
+        # neither a spoken yes nor the Confirm button saves an unapplied correction
+        yes = "sim" if page_lang == "pt-PT" else "yes"
+        spoken = self.voice("/voice/extract", token, page_lang, conversation_id=cid, text=yes)
+        self.assertNotEqual(spoken["state"], "saved", spoken)
+        self.assertNotEqual(spoken["state"], "confirm", spoken)
+        button = self.voice("/voice/confirm", token, page_lang, conversation_id=cid)
+        self.assertEqual(button["state"], "error", button)
+        self.assertEqual(self.deals(), [])
+
+    def test_a_correction_with_the_field_omitted_by_extraction_asks_again_and_saves_nothing(self):
+        cases = (("en-GB", "en", "No, my share is minus 40 percent", "What is your share?", "40%"),
+                 ("en-GB", "en", "No, change the share", "What is your share?", "40%"),
+                 ("pt-PT", "pt", "Não, a minha percentagem é menos 40", "Qual é a tua percentagem?", "40 %"))
+        for page_lang, code, said, question, old in cases:
+            with self.subTest(said=said):
+                voice_flow.CONVERSATIONS.clear()
+                extraction = self.read_back(code, page_lang, update("new_deal", code), update("new_deal", code),
+                                            update("new_deal", code))
+                with stub_clients(extraction):
+                    token = self.page_token(page_lang)
+                    first = self.voice("/voice/extract", token, page_lang, text="x")
+                    self.assertEqual(first["state"], "confirm", first)
+                    fixed = self.voice("/voice/extract", token, page_lang, conversation_id=first["conversation_id"],
+                                       text=said)
+                    self.assertEqual(fixed["state"], "ask", fixed)
+                    self.assertEqual(fixed["question"], question)
+                    self.assertNotIn(old, fixed.get("readback", ""))
+                    self.assert_nothing_saved(token, page_lang, fixed["conversation_id"])
+
+    def test_a_correction_in_the_turn_after_a_plain_no_is_never_lost_either(self):
+        for page_lang, code, no, said, question in (
+                ("en-GB", "en", "no", "my share is minus 40", "What is your share?"),
+                ("pt-PT", "pt", "não", "a percentagem é 30", "Qual é a tua percentagem?")):
+            with self.subTest(lang=page_lang):
+                voice_flow.CONVERSATIONS.clear()
+                extraction = self.read_back(code, page_lang, update("new_deal", code), update("new_deal", code),
+                                            update("new_deal", code))
+                with stub_clients(extraction):
+                    token = self.page_token(page_lang)
+                    first = self.voice("/voice/extract", token, page_lang, text="x")
+                    asked = self.voice("/voice/extract", token, page_lang, conversation_id=first["conversation_id"],
+                                       text=no)
+                    self.assertEqual(asked["state"], "ask")
+                    fixed = self.voice("/voice/extract", token, page_lang, conversation_id=asked["conversation_id"],
+                                       text=said)
+                    self.assertEqual(fixed["state"], "ask", fixed)
+                    self.assertEqual(fixed["question"], question)
+                    self.assert_nothing_saved(token, page_lang, fixed["conversation_id"])
+
+    def test_a_correction_that_changes_nothing_is_never_read_back_as_if_nothing_was_said(self):
+        extraction = self.read_back("en", "en-GB", update("new_deal", "en"))
+        with stub_clients(extraction):
+            token = self.page_token("en-GB")
+            first = self.voice("/voice/extract", token, "en-GB", text="x")
+            fixed = self.voice("/voice/extract", token, "en-GB", conversation_id=first["conversation_id"],
+                               text="no, it is different")
+            self.assertEqual(fixed["state"], "ask", fixed)
+            self.assertEqual(fixed["question"], "What should I correct?")
+        self.assertEqual(self.deals(), [])
+
+    def test_a_valid_correction_is_read_back_and_saved_as_given(self):
+        cases = (("pt-PT", "pt", "Não, a minha percentagem é 30", "sim", "30 %", "a tua parte 3\u00a0000 €"),
+                 ("en-GB", "en", "No, my share is 30 percent", "yes", "30%", "your share €3,000"))
+        for page_lang, code, said, yes, shown, mine in cases:
+            with self.subTest(said=said):
+                voice_flow.CONVERSATIONS.clear()
+                for deal in self.deals():
+                    store.delete_deal(self.db_path, deal["id"], self.tenant)
+                extraction = self.read_back(code, page_lang, update("new_deal", code, share="30"))
+                with stub_clients(extraction):
+                    token = self.page_token(page_lang)
+                    first = self.voice("/voice/extract", token, page_lang, text="x")
+                    fixed = self.voice("/voice/extract", token, page_lang, conversation_id=first["conversation_id"],
+                                       text=said)
+                    self.assertEqual(fixed["state"], "confirm", fixed)
+                    self.assertIn(shown, fixed["readback"])
+                    self.assertIn(mine, fixed["readback"])
+                    self.assertEqual(self.deals(), [])
+                    done = self.voice("/voice/extract", token, page_lang, conversation_id=fixed["conversation_id"],
+                                      text=yes)
+                self.assertEqual(done["state"], "saved")
+                [deal] = self.deals()
+                self.assertEqual((deal["share_rate_used"], deal["part_base"]), ("0.3", 300000))
+
+    def test_a_negative_correction_is_refused_and_asked_again(self):
+        cases = (("en-GB", "en", "No, my share is minus 40 percent", ("40", "-40", "0.4")),
+                 ("pt-PT", "pt", "Não, a minha percentagem é menos 40", ("40", "-40", "0.4")),
+                 ("en-GB", "en", "No, my share is -40%", ("-40%",)))
+        for page_lang, code, said, extracted in cases:
+            for value in extracted:
+                with self.subTest(said=said, extracted=value):
+                    voice_flow.CONVERSATIONS.clear()
+                    extraction = self.read_back(code, page_lang, update("new_deal", code, share=value),
+                                                update("new_deal", code))
+                    with stub_clients(extraction):
+                        token = self.page_token(page_lang)
+                        first = self.voice("/voice/extract", token, page_lang, text="x")
+                        fixed = self.voice("/voice/extract", token, page_lang,
+                                           conversation_id=first["conversation_id"], text=said)
+                        self.assertEqual(fixed["state"], "ask", fixed)
+                        self.assert_nothing_saved(token, page_lang, fixed["conversation_id"])
+
+    def test_a_correction_to_another_field_keeps_the_rest_and_the_old_value_is_not_kept_for_the_named_one(self):
+        extraction = self.read_back("en", "en-GB", update("new_deal", "en", commission="12000"))
+        with stub_clients(extraction):
+            token = self.page_token("en-GB")
+            first = self.voice("/voice/extract", token, "en-GB", text="x")
+            fixed = self.voice("/voice/extract", token, "en-GB", conversation_id=first["conversation_id"],
+                               text="No, the commission is 12000")
+            self.assertEqual(fixed["state"], "confirm", fixed)
+            self.assertIn("€12,000", fixed["readback"])
+            self.assertIn("40%", fixed["readback"])
+            self.assertIn("your share €4,800", fixed["readback"])
+
+
+class SaidBeatsFlagTest(VoiceTestCase):
+    """Criterion (16): what the agent says about the date beats extraction's estimated flag."""
+
+    def run_date(self, page_lang, code, said, date, flag, **extra):
+        reply = update("new_deal", code, name="Exact beats flag", stage="confirmado", commission="10000",
+                       share="40", escritura_date=date, escritura_estimada=flag, **extra)
+        with stub_clients(ScriptedExtraction(reply)):
+            token = self.page_token(page_lang)
+            data = self.voice("/voice/extract", token, page_lang, text=said)
+            self.assertEqual(data["state"], "confirm", data)
+            self.voice("/voice/confirm", token, page_lang, conversation_id=data["conversation_id"])
+        [deal] = self.deals()
+        return data, deal
+
+    def test_an_explicitly_exact_date_with_a_conflicting_estimated_flag_is_stored_as_exact(self):
+        cases = (("en-GB", "en", "new deal, the escritura is exact, 20 December 2026", "2026-12-20", "Dec 20"),
+                 ("en-GB", "en", "the escritura is exactly on the 20th of December", "2026-12-20", "Dec 20"),
+                 ("pt-PT", "pt", "a escritura é exata, dia 20 de dezembro", "2026-12-20", "20 dez"),
+                 ("en-GB", "en", "new deal, escritura 15 March 2027", "2027-03-15", "Mar 15"),
+                 ("pt-PT", "pt", "novo negócio, escritura a 15 de março de 2027", "2027-03-15", "15 mar 2027"),
+                 ("pt-PT", "pt", "novo negócio, escritura 15/03/2027", "2027-03-15", "15 mar 2027"))
+        for page_lang, code, said, iso, shown in cases:
+            for flag in (True, "true", 1):
+                with self.subTest(said=said, flag=flag):
+                    voice_flow.CONVERSATIONS.clear()
+                    for deal in self.deals():
+                        store.delete_deal(self.db_path, deal["id"], self.tenant)
+                    data, deal = self.run_date(page_lang, code, said, iso, flag)
+                    self.assertIn(shown, data["readback"])
+                    for word in ("estimat", "mid-", "meados"):
+                        self.assertNotIn(word, data["readback"])
+                    self.assertEqual((deal["escritura_date"], deal["escritura_estimada"]), (iso, 0))
+
+    def test_a_month_alone_is_still_the_estimated_15th(self):
+        cases = (("en-GB", "en", "new deal, the escritura should be in March", "2027-03", "mid-March 2027 (estimated)"),
+                 ("pt-PT", "pt", "novo negócio, deve ser em março", "2027-03", "meados de março 2027 (estimada)"),
+                 ("pt-PT", "pt", "novo negócio, deve ser em março", "março", "meados de março 2027 (estimada)"))
+        for page_lang, code, said, date, shown in cases:
+            for flag in (True, False, None):
+                with self.subTest(said=said, date=date, flag=flag):
+                    voice_flow.CONVERSATIONS.clear()
+                    for deal in self.deals():
+                        store.delete_deal(self.db_path, deal["id"], self.tenant)
+                    data, deal = self.run_date(page_lang, code, said, date, flag)
+                    self.assertIn(shown, data["readback"])
+                    self.assertEqual((deal["escritura_date"], deal["escritura_estimada"]), ("2027-03-15", 1))
+
+    def test_an_exact_date_for_another_event_does_not_make_a_month_alone_exact(self):
+        data, deal = self.run_date("en-GB", "en", "the CPCV was on 10 January 2027, the escritura is in March",
+                                   "2027-03", True)
+        self.assertEqual((deal["escritura_date"], deal["escritura_estimada"]), ("2027-03-15", 1))
+
+    def test_an_exact_date_without_any_exact_wording_keeps_the_flag_extraction_gave(self):
+        data, deal = self.run_date("en-GB", "en", "new deal, escritura around the middle of December",
+                                   "2026-12-15", True)
+        self.assertEqual(deal["escritura_estimada"], 1)
