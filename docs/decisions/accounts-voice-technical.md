@@ -250,6 +250,13 @@ tenant that started them, and expire after two hours. A commission
 received is stored in its own `receipts` table; `received` stays
 derived and no stage is marked by hand.
 
+After a read-back each answer is a correction. A field the agent names
+(by words such as share, commission, date) without a usable value, or
+with a negative one, is dropped and asked again (`app/voice_handlers.py`,
+`voice_flow.fields_named`); an answer that changes nothing asks "What
+should I correct?". `voice_flow.says_exact_date` makes what the agent
+said beat extraction's estimated flag.
+
 Options considered: (a) retry ambiguities silently; (b) one question to
 the agent. Chosen (b): retries spend budget hiding the ambiguity the
 agent must resolve.
@@ -306,7 +313,9 @@ Estimated escritura date (Item 4): the deal stores an integer
 a date. A month given alone is stored as the 15th of that month with the
 flag set; an exact date clears it, whether it arrives by voice or on the
 deal form (the form has an \"Estimated date\" checkbox that the edit
-form shows as stored). The flag changes how a date is shown
+form shows as stored). What the agent says beats the extraction's
+`escritura_estimada` flag: a date said as exact or in full day, month
+and year is stored exact (flag 0) even if extraction returns true. The flag changes how a date is shown
 (\"(estimada)\" / \"(estimated)\" on cards, the table and the read-back,
 \"meados de março\" / \"mid-March\"), never which month the deal counts
 in: an estimated deal counts in its month's forecast like any other.

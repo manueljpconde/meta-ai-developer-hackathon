@@ -1032,3 +1032,69 @@ class SaidBeatsFlagTest(VoiceTestCase):
         data, deal = self.run_date("en-GB", "en", "new deal, escritura around the middle of December",
                                    "2026-12-15", True)
         self.assertEqual(deal["escritura_estimada"], 1)
+
+
+class SpokenFullConversationTest(VoiceTestCase):
+    """The full new-deal conversation with two missing fields, spoken: every turn is a WAV body."""
+
+    def post_audio(self, token, wav, lang, cid=""):
+        url = "/voice/transcribe?format=json&csrf_token=%s&conversation_id=%s" % (token, cid)
+        response = self.client.request("POST", url, body=wav, content_type="audio/wav", accept_language=lang)
+        self.assertEqual(response.code, 200, response.body[:300])
+        return json.loads(response.body)
+
+    def run_spoken(self, page_lang, code, heard, question, readback, yes):
+        extraction = ScriptedExtraction(
+            update("new_deal", code, name="T3 Benfica", stage="confirmado", escritura_date="2026-12-15"),
+            update("new_deal", code, commission="10000", share="40"))
+        transcription = ScriptedTranscription(*heard, yes)
+        wav = make_wav(1)
+        with stub_clients(extraction, transcription):
+            token = self.page_token(page_lang)
+            first = self.post_audio(token, wav, page_lang)
+            self.assertEqual((first["state"], first["question"]), ("ask", question))
+            self.assertEqual(self.deals(), [])
+            second = self.post_audio(token, wav, page_lang, first["conversation_id"])
+            self.assertEqual((second["state"], second["readback"]), ("confirm", readback))
+            self.assertEqual(self.deals(), [], "nothing is stored before the spoken yes")
+            done = self.post_audio(token, wav, page_lang, second["conversation_id"])
+        self.assertEqual(done["state"], "saved")
+        self.assertEqual(transcription.audio, [wav, wav, wav])
+        [deal] = self.deals()
+        self.assertEqual((deal["agency_commission_cents"], deal["part_base"], deal["escritura_estimada"]),
+                         (1000000, 400000, 0))
+        return first, second
+
+    def test_full_pt_conversation_by_voice(self):
+        self.run_spoken("pt-PT", "pt", ("novo T3 Benfica", "10 000 euros e 40 por cento"),
+                        "Qual é a comissão e a tua percentagem?",
+                        "T3 Benfica, 10\u00a0000 €, 40 %, a tua parte 4\u00a0000 €, escritura 15 dez. Confirmas?", "sim")
+
+    def test_full_en_conversation_by_voice(self):
+        self.run_spoken("en-GB", "en", ("new deal T3 Benfica", "10,000 euros and 40 percent"),
+                        "What is the commission and your share?",
+                        "T3 Benfica, €10,000, 40%, your share €4,000, escritura Dec 15. Do you confirm?", "yes")
+
+    def test_an_english_conversation_on_a_portuguese_page_is_spoken_back_in_english(self):
+        first, second = self.run_spoken("pt-PT", "en", ("new deal T3 Benfica", "10,000 euros and 40 percent"),
+                                        "What is the commission and your share?",
+                                        "T3 Benfica, €10,000, 40%, your share €4,000, escritura Dec 15. Do you confirm?",
+                                        "yes")
+        self.assertEqual((first["lang"], second["lang"]), ("en-GB", "en-GB"))
+
+    def test_a_spoken_correction_with_the_field_omitted_asks_again_and_a_spoken_yes_saves_nothing(self):
+        extraction = ScriptedExtraction(
+            update("new_deal", "en", name="T3 Benfica", stage="confirmado", escritura_date="2026-12-15",
+                   commission="10000", share="40"),
+            update("new_deal", "en"), update("new_deal", "en"))
+        transcription = ScriptedTranscription("new deal T3 Benfica", "No, my share is minus 40 percent", "yes")
+        wav = make_wav(1)
+        with stub_clients(extraction, transcription):
+            token = self.page_token("en-GB")
+            first = self.post_audio(token, wav, "en-GB")
+            self.assertEqual(first["state"], "confirm")
+            fixed = self.post_audio(token, wav, "en-GB", first["conversation_id"])
+            self.assertEqual((fixed["state"], fixed["question"]), ("ask", "What is your share?"))
+            yes = self.post_audio(token, wav, "en-GB", fixed["conversation_id"])
+            self.assertNotEqual(yes["state"], "saved")
+        self.assertEqual(self.deals(), [])

@@ -237,6 +237,55 @@ class RealServerMicrophoneAndConfirmJourney(RealServerTestCase):
         [deal] = store.list_deals(self.db, tenant_id=self.tenant("mic@example.com"))
         self.assertEqual((deal["name"], deal["part_base"]), ("T2 Mic", 450000))
 
+    def test_a_correction_and_an_exact_date_over_http(self):
+        """Criteria (15) and (16) on the real server, with the requests the script sends."""
+        b = self.browser
+        self.sign_in("fix@example.com", "en-GB")
+        self.save_settings("en-GB")
+        extraction = ScriptedExtraction(
+            update("new_deal", "en", name="T4 Estrela", stage="confirmado", commission="10000", share="40",
+                   escritura_date="2026-12-20", escritura_estimada=True),
+            update("new_deal", "en"),
+            update("new_deal", "en"),
+            update("new_deal", "en", share="30"))
+        with stub_clients(extraction):
+            status, page = b.get("/", accept_language="en-GB")
+            token = token_in(page)
+
+            def send(path, **fields):
+                fields.update(csrf_token=token, format="json")
+                status, headers, body = b.post(path, fields)
+                self.assertEqual(status, 200)
+                return json.loads(body)
+
+            first = send("/voice/extract", conversation_id="",
+                         text="New deal T4 Estrela, 10000, 40 percent, the escritura is exact, 20 December 2026")
+            self.assertEqual(first["state"], "confirm")
+            self.assertNotIn("estimated", first["readback"])
+            self.assertIn("Dec 20", first["readback"])
+            # a correction that extraction returns nothing for is asked again, never read back unchanged
+            lost = send("/voice/extract", conversation_id=first["conversation_id"],
+                        text="No, my share is minus 40 percent")
+            self.assertEqual((lost["state"], lost["question"]), ("ask", "What is your share?"))
+            self.assertEqual(store.count_deals(self.db), 0)
+            # a spoken yes after an unapplied correction saves nothing
+            refused = send("/voice/extract", conversation_id=lost["conversation_id"], text="yes")
+            self.assertNotEqual(refused["state"], "saved")
+            self.assertEqual(store.count_deals(self.db), 0)
+            fixed = send("/voice/extract", conversation_id=lost["conversation_id"], text="30 percent")
+            self.assertEqual(fixed["state"], "confirm")
+            self.assertIn("30%", fixed["readback"])
+            self.assertIn("your share €3,000", fixed["readback"])
+            self.assertEqual(store.count_deals(self.db), 0)
+            done = send("/voice/extract", conversation_id=fixed["conversation_id"], text="yes")
+            self.assertEqual(done["state"], "saved")
+        [deal] = store.list_deals(self.db, tenant_id=self.tenant("fix@example.com"))
+        self.assertEqual((deal["share_rate_used"], deal["part_base"], deal["escritura_date"],
+                          deal["escritura_estimada"]), ("0.3", 300000, "2026-12-20", 0))
+        status, forecast = b.get("/?month=2026-12", accept_language="en-GB")
+        self.assertIn("T4 Estrela", forecast)
+        self.assertNotIn("(estimated)", forecast)
+
     def test_cancel_over_http_saves_nothing_and_cancel_is_not_a_page_replacement(self):
         b = self.browser
         self.sign_in("cancel@example.com", "pt-PT")

@@ -37,7 +37,7 @@ class CriteriaMapTest(unittest.TestCase):
         ids = {line[0] for line in map_lines()}
         expected = {"A0", "A1", "1a", "2", "3", "4", "5", "6", "7", "7a", "7b", "7c", "7d", "8", "9", "10", "11",
                     "12", "13", "14", "15", "16", "17", "S1", "S2", "S4", "7p", "8p", "10p", "11p", "12p", "13p",
-                    "14p", "M2", "M3"}
+                    "14p", "M2", "M3", "c15", "c16", "c17"}
         self.assertEqual(expected - ids, set())
         self.assertEqual(len(map_lines()), len({line[0] for line in map_lines()}), "one line per criterion")
 
@@ -95,6 +95,21 @@ class DecisionDocumentsTest(unittest.TestCase):
             self.assertIn(fact, a2)
         t8 = self.section(self.tech, "## T8. ")
         for fact in ("escritura_estimada", "15th", "(estimada)", "mid-March"):
+            self.assertIn(fact, t8)
+
+    def test_documents_state_that_a_correction_is_never_lost_and_what_is_said_beats_the_flag(self):
+        d5 = self.section(self.func, "## D5. ")
+        for fact in ("A correction is never lost", "asked again"):
+            self.assertIn(fact, d5)
+        a2 = self.func[self.func.index("- A2. "):]
+        a2 = a2[:a2.index("- A3. ")]
+        for fact in ("what the agent says", "beats the extraction's flag", "only a month alone is estimated"):
+            self.assertIn(fact, a2)
+        t6 = self.section(self.tech, "## T6. ")
+        for fact in ("each answer is a correction", "says_exact_date"):
+            self.assertIn(fact, t6)
+        t8 = self.section(self.tech, "## T8. ")
+        for fact in ("beats the extraction's", "flag 0"):
             self.assertIn(fact, t8)
 
     def test_old_design_is_gone(self):

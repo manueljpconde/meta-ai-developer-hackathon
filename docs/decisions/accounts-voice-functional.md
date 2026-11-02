@@ -253,7 +253,11 @@ of the key facts, including the agent's share computed by the engine
 Confirmas?" / "Do you confirm?"). A single "sim" / "yes", or the
 Confirmar button, saves; those are the only two ways. "não" / "no", or a
 correction, changes the named field and reads the update back again.
-Nothing is stored before that yes. A conversation stops after 6
+A correction is never lost: when the agent names a field but the
+extraction returns no usable value for it (or a negative one), the old
+value is dropped and that field is asked again, so a "sim" / "yes"
+never saves the line that was just corrected. Nothing is stored before
+that yes. A conversation stops after 6
 questions without completing, or on "cancelar" / "cancel"; it saves
 nothing and the screen shows what was understood so far. There are at
 most 30 conversations per agent per day; over the limit the answer is
@@ -381,7 +385,10 @@ request page, applied above:
   D6, checked by criterion 11. Item 4 adds that the date may be
   estimated: Agentimo is a cash-flow forecast, so every deal has an
   escritura date, exact or estimated, and nothing is saved without
-  one. An exact date said is stored as exact. When only a month is
+  one. An exact date said is stored as exact, and what the agent says
+  beats the extraction's flag: a date said as exact ("exata" /
+  "exact") or in full (day, month and year) is exact even when the
+  extraction marks it estimated; only a month alone is estimated. When only a month is
   given (\"deve ser em março\") the date is the 15th of that month
   and the deal's \"escritura estimada\" flag is set; when no date is
   given Agentimo asks \"Qual é a data da escritura, mesmo
