@@ -265,12 +265,15 @@ class RecordingDiagnosticTest(VoiceTestCase):
         data = json.loads(response.body)
         self.assertEqual((data["state"], data["diagnostic"]["sample_rate"]), ("error", 48000))
         self.assertGreater(data["diagnostic"]["duration_seconds"], 60)
-        # a complete, valid but over-limit WAV is measured like any other
-        response = self.client.request("POST", url, body=tone_wav(62, 0.5), content_type="audio/wav")
+        # the body is never read to measure it: peak is null, shown as a dash
+        self.assertIsNone(data["diagnostic"]["peak"])
+        # the same holds for a complete, valid but over-limit WAV
+        response = self.client.request("POST", url, body=tone_wav(62, 0.5),
+                                       content_type="audio/wav")
         data = json.loads(response.body)
         self.assertEqual(data["state"], "error")
-        self.assertEqual(data["diagnostic"],
-                         {"sample_rate": 48000, "duration_seconds": 62.0, "peak": 0.5})
+        self.assertEqual(data["diagnostic"]["sample_rate"], 48000)
+        self.assertIsNone(data["diagnostic"]["peak"])
 
 
 # ── U1 ───────────────────────────────────────────────────────────────
