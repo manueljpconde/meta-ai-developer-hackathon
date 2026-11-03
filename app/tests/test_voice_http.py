@@ -10,6 +10,7 @@ import http.cookiejar
 import json
 import os
 import re
+import struct
 import tempfile
 import threading
 import unittest
@@ -19,7 +20,7 @@ import urllib.request
 from decimal import Decimal
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
-from app import mail, store, voice_flow, web
+from app import i18n, mail, store, voice_flow, web
 from app.server import ThreadingWSGIServer
 from app.tests.voice_support import ScriptedExtraction, ScriptedTranscription, make_wav, stub_clients, update
 
@@ -63,6 +64,17 @@ class Browser:
 
 def token_in(body):
     return re.search(r'name="csrf_token" value="([^"]+)"', body).group(1)
+
+
+def spoken_tone_wav(seconds, amplitude):
+    """A 16 kHz mono 16-bit WAV of alternating ±amplitude samples."""
+    n = int(16000 * seconds)
+    samples = [int(amplitude * 32767) if i % 2 == 0 else -int(amplitude * 32767)
+               for i in range(n)]
+    data = struct.pack("<%dh" % n, *samples)
+    return (b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVE" + b"fmt " +
+            struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16) +
+            b"data" + struct.pack("<I", len(data)) + data)
 
 
 class RealServerTestCase(unittest.TestCase):
@@ -300,6 +312,57 @@ class RealServerMicrophoneAndConfirmJourney(RealServerTestCase):
         data = json.loads(body)
         self.assertEqual((data["state"], data["message"]), ("cancelled", "Cancelado. Nada foi guardado."))
         self.assertEqual(store.count_deals(self.db), 0)
+
+
+class RealServerRefusalDiagnostic(RealServerTestCase):
+    """The owner's V3 ruling over real HTTP: a truncated or invalid body is
+    unavailable — duration and peak are both null, shown as dashes — while the
+    over-limit branch keeps today's behaviour (duration from the header, peak
+    null, body not read)."""
+
+    def transcribe(self, wav, lang="en-GB"):
+        b = self.browser
+        status, page = b.get("/", accept_language=lang)
+        url = ("/voice/transcribe?format=json&conversation_id=&csrf_token=%s"
+               "&sample_rate=48000" % token_in(page))
+        return b.post_wav(url, wav)
+
+    def test_an_invalid_body_over_http_is_refused_with_duration_and_peak_null(self):
+        self.sign_in("invalid-body@example.com", "en-GB")
+        self.save_settings("en-GB")
+        invalid = bytearray(spoken_tone_wav(1, 0.5))
+        invalid[0:4] = b"NOPE"
+        data = self.transcribe(bytes(invalid))
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_wav_error"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_a_truncated_body_over_http_is_refused_with_duration_and_peak_null(self):
+        self.sign_in("truncated-body@example.com", "en-GB")
+        self.save_settings("en-GB")
+        truncated = spoken_tone_wav(1, 0.5)[:-2000]
+        # the header still declares a full second of audio
+        declared = struct.unpack_from("<I", truncated, 40)[0]
+        self.assertEqual(declared, 32000)
+        data = self.transcribe(truncated)
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_wav_error"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_an_over_limit_body_over_http_keeps_the_header_duration_and_null_peak(self):
+        self.sign_in("over-limit@example.com", "en-GB")
+        self.save_settings("en-GB")
+        data = self.transcribe(spoken_tone_wav(62, 0.5))
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": 62.0,
+                                              "peak": None})
 
 
 if __name__ == "__main__":

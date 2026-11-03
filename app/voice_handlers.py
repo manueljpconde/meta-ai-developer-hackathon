@@ -275,12 +275,13 @@ def recording_diagnostic(query, wav):
 
 def refusal_diagnostic(query, wav):
     """The diagnostic of a refused body, which is never measured (owner's V3
-    ruling): the reported sample rate, the seconds the header states, and peak
-    null, shown as a dash. Nothing is stored, written or logged.
+    ruling, option C): a truncated or invalid body reports only the sample
+    rate the page reported; duration and peak are unavailable — null, shown
+    as a dash — because only a complete, valid WAV reports them. Nothing is
+    stored, written or logged.
     """
-    seconds = voice_audio.header_seconds(wav or b"")
     return {"sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
-            "duration_seconds": seconds, "peak": None}
+            "duration_seconds": None, "peak": None}
 
 
 def handle_audio(env, query, wav):
@@ -302,7 +303,8 @@ def handle_audio(env, query, wav):
                         diagnostic=recording_diagnostic(query, wav))
     ok, _reason = voice_mod.validate_wav(wav)
     if not ok:
-        # A refused body is never measured (owner's V3 ruling): peak is null.
+        # A refused body is never measured (owner's V3 ruling, option C):
+        # duration and peak are unavailable — null, shown as a dash.
         return _payload(conv, "error", lang, message=_t(lang, "voice_wav_error"),
                         diagnostic=refusal_diagnostic(query, wav))
     try:
