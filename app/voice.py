@@ -68,6 +68,10 @@ def validate_wav(data):
         offset += 8 + chunk_size + (chunk_size & 1)
     if declared is None:
         return False, "data"
+    # A body shorter than the data chunk declares was cut off in transit:
+    # refuse it before any model call, like every other broken header.
+    if len(data) - offset < declared:
+        return False, "truncated"
     if max(declared, len(data) - offset) > MAX_AUDIO_BYTES:
         return False, "duration"
     return True, ""

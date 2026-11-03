@@ -117,6 +117,18 @@ def wav_stats(wav):
     return round(count / TARGET_RATE, 2), round(min(peak / 32767.0, 1.0), 3)
 
 
+def header_seconds(wav):
+    """The duration a refused body's header states, in seconds.
+
+    Reads only the chunk sizes, never the samples: a body the server refuses
+    (invalid or truncated) is not measured, so its peak is null and the panel
+    shows a dash. Nothing is written or logged here or by the caller.
+    """
+    offset, declared = _data_chunk(wav)
+    count = min(declared, max(len(wav) - offset, 0)) // 2
+    return round(count / TARGET_RATE, 2)
+
+
 def clean_rate(text):
     """The sample rate the page reported, as a whole number, or None."""
     try:

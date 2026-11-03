@@ -257,6 +257,32 @@ class RecordingDiagnosticTest(VoiceTestCase):
             for writer in ("open(", ".write(", "logging", "print(", "tempfile"):
                 self.assertNotIn(writer, source.replace("wav_stats", ""), name)
 
+    def test_an_invalid_body_is_refused_with_peak_null_never_measured(self):
+        # Owner's V3 ruling: an invalid body is not measured either; the
+        # diagnostic keeps the reported rate and the seconds it can read from
+        # the header, with peak null, shown as a dash.
+        invalid = bytearray(tone_wav(1, 0.5))
+        invalid[0:4] = b"NOPE"
+        data = self.post_audio(bytes(invalid))
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["diagnostic"]["sample_rate"], 48000)
+        self.assertIsNone(data["diagnostic"]["peak"])
+
+    def test_a_truncated_body_is_refused_with_peak_null_never_measured(self):
+        # QA's no_go case: a valid WAV with the last 2000 bytes cut off. It
+        # must be refused, and never measured: peak is null.
+        truncated = tone_wav(1, 0.5)[:-2000]
+        data = self.post_audio(truncated)
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["message"], i18n.text("pt-PT", "voice_wav_error"))
+        self.assertEqual(data["diagnostic"]["sample_rate"], 48000)
+        self.assertIsNone(data["diagnostic"]["peak"])
+        # nothing is transcribed from a truncated body
+        with stub_clients(ScriptedExtraction(), ScriptedTranscription("")):
+            again = self.post_audio(tone_wav(1, 0.5)[:-2000])
+        self.assertEqual(again["state"], "error")
+        self.assertIsNone(again["diagnostic"]["peak"])
+
     def test_a_body_over_the_limit_is_refused_with_the_numbers_it_can_give(self):
         token = self.page_token()
         body = b"\x00" * (16000 * 2 * 61 + 5000)

@@ -265,11 +265,22 @@ def handle_text(env, fields):
 def recording_diagnostic(query, wav):
     """Numbers only: the rate the page reported, the seconds and the peak (0 to 1).
 
-    Read from the body held in memory; nothing is stored, written or logged.
+    For an answer that is not a successful transcription. Read from the body
+    held in memory; nothing is stored, written or logged.
     """
     seconds, peak = voice_audio.wav_stats(wav or b"")
     return {"sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
             "duration_seconds": seconds, "peak": peak}
+
+
+def refusal_diagnostic(query, wav):
+    """The diagnostic of a refused body, which is never measured (owner's V3
+    ruling): the reported sample rate, the seconds the header states, and peak
+    null, shown as a dash. Nothing is stored, written or logged.
+    """
+    seconds = voice_audio.header_seconds(wav or b"")
+    return {"sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
+            "duration_seconds": seconds, "peak": None}
 
 
 def handle_audio(env, query, wav):
@@ -291,8 +302,9 @@ def handle_audio(env, query, wav):
                         diagnostic=recording_diagnostic(query, wav))
     ok, _reason = voice_mod.validate_wav(wav)
     if not ok:
+        # A refused body is never measured (owner's V3 ruling): peak is null.
         return _payload(conv, "error", lang, message=_t(lang, "voice_wav_error"),
-                        diagnostic=recording_diagnostic(query, wav))
+                        diagnostic=refusal_diagnostic(query, wav))
     try:
         transcript, _raw = _client("TRANSCRIBE_CLIENT", voice_mod.TranscriptionClient).transcribe(wav)
     except Exception:
