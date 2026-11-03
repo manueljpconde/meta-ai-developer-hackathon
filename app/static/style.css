@@ -257,3 +257,49 @@ fieldset label input[type="radio"] { width: auto; min-height: auto; display: inl
 main{padding-bottom:5rem}
 @media(min-width:1024px){.voice-falar-fixed{display:none}.voice-falar-header{display:inline-flex}.voice-panel{left:50%;transform:translateX(-50%);max-width:40rem;width:100%;padding-bottom:0.75rem}main{padding-bottom:0}}
 @media(max-width:1023px){.voice-falar-header{display:none}}
+
+/* Item 4f: icon, panel order, sheet on wide screens, header, forecast strip */
+.mic-icon{display:block;width:28px;height:28px;fill:currentColor;color:#fff}
+.voice-falar-header{display:inline-flex;align-items:center;gap:0.35rem;height:auto;min-height:36px;padding:0.2rem 0.6rem;background:#16302c;color:#fff;border:1px solid #16302c;margin-top:0}
+.voice-falar-header .mic-icon{width:24px;height:24px}
+.voice-working{color:#5f6f6a;font-size:0.9rem;min-height:1.2rem}
+.voice-diag{color:#5f6f6a;font-size:0.75rem;margin:0.25rem 0}
+.voice-diag:empty,.voice-working:empty{display:none}
+.voice-settings-first{font-size:1.1rem;font-weight:600;margin:0.5rem 0}
+.voice-settings-first[hidden]{display:none !important}
+#voiceTextForm[hidden]{display:none !important}
+.voice-panel button:disabled{opacity:0.6;cursor:default}
+.voice-panel .btn-primary,#voiceTextForm button[type="submit"]{background:#16302c;color:#fff;border:1px solid #16302c}
+.voice-panel .btn-secondary{background:transparent;color:#16302c;border:1px solid #16302c}
+.voice-actions{flex-direction:row;margin:0.5rem 0}
+.voice-actions button{margin-top:0.25rem}
+.voice-backdrop{display:none}
+.voice-backdrop[hidden]{display:none !important}
+
+/* Header: name, navigation, then PT | EN and sign-out together */
+header .header-tools{display:flex;align-items:center;gap:0.5rem;flex:0 0 auto;margin-left:auto}
+header .header-tools form{margin:0}
+/* Phones: the name and, on the same baseline, PT | EN with sign-out; the navigation on a line of its own */
+@media (max-width: 480px) {
+  header{display:grid;grid-template-columns:1fr auto;grid-template-areas:"brand tools" "nav nav";align-items:baseline;gap:0.25rem 0.5rem}
+  header .brand{grid-area:brand}
+  header .header-tools{grid-area:tools;flex-wrap:nowrap;align-items:baseline;margin-left:0}
+  header nav{grid-area:nav}
+}
+
+/* Forecast: the strip, the money lines and the deal name */
+.forecast-strip{display:grid;grid-template-columns:1fr;gap:0.5rem;margin:0.5rem 0 1rem}
+.forecast-strip--empty{display:block;color:#5f6f6a}
+.strip-item{display:flex;flex-direction:column;border:1px solid #e6ebe8;background:#fff;padding:0.75rem}
+.strip-label{color:#5f6f6a;font-size:0.85rem}
+.strip-value{font-size:1.4rem}
+.strip-note{color:#5f6f6a}
+.forecast-grid dt,.forecast-grid dd{white-space:nowrap;margin:0}
+.forecast-grid dd.money-breakdown{grid-column:1 / -1;padding-left:1.25rem;font-size:0.9rem;color:#5f6f6a;white-space:normal}
+.deal-table td:first-child{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+
+@media (min-width: 1024px) {
+  .forecast-strip{grid-template-columns:repeat(3, 1fr)}
+  .voice-backdrop{display:block;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(22,48,44,0.45);z-index:20}
+  .voice-panel{height:auto;max-height:70vh;overflow-y:auto;border-radius:16px 16px 0 0;box-shadow:0 -8px 32px rgba(0,0,0,0.25);max-width:640px}
+}

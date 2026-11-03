@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from app import i18n
 from app import store
 from app import voice as voice_mod
+from app import voice_audio
 from app import voice_flow as vf
 from engine.calc import agent_share
 
@@ -230,11 +231,28 @@ def _advance(env, conv, text):
     return _payload(conv, "confirm", lang, readback=outcome.text)
 
 
+def settings_first(env, lang):
+    """The one line for an agent with no saved settings, or None.
+
+    Checked before any question and before any model call; the refusal at
+    confirmation (voice_no_settings) stays as the safety net.
+    """
+    if store.get_settings(env.db, tenant_id=env.tenant) is not None:
+        return None
+    return _payload(None, "settings_first", lang,
+                    message=_t(lang, "voice_settings_first"), link="/settings",
+                    link_text=_t(lang, "voice_settings_link"))
+
+
 def handle_text(env, fields):
     text = fields.get("text", "").strip()[:500]
     cid = fields.get("conversation_id", "")
     conv = vf.get_conversation(cid, env.tenant) if cid else None
     lang = conv["lang"] if conv else env.lang
+    if conv is None:
+        first = settings_first(env, lang)
+        if first is not None:
+            return first
     if not text:
         return _payload(conv, "error", lang, message=_t(lang, "voice_empty"))
     if conv is None:
@@ -244,23 +262,46 @@ def handle_text(env, fields):
     return _advance(env, conv, text)
 
 
+def recording_diagnostic(query, wav):
+    """Numbers only: the rate the page reported, the seconds and the peak (0 to 1).
+
+    Read from the body held in memory; nothing is stored, written or logged.
+    """
+    seconds, peak = voice_audio.wav_stats(wav or b"")
+    return {"sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
+            "duration_seconds": seconds, "peak": peak}
+
+
 def handle_audio(env, query, wav):
-    """A raw WAV body: checked, transcribed, then handled as typed text."""
+    """A raw WAV body: checked, transcribed, then handled as typed text.
+
+    An answer that is not a successful transcription carries the recording
+    diagnostic in ``diagnostic``; a successful one carries none.
+    """
     cid = query.get("conversation_id", "")
     conv = vf.get_conversation(cid, env.tenant) if cid else None
     lang = conv["lang"] if conv else env.lang
+    if conv is None:
+        first = settings_first(env, lang)
+        if first is not None:
+            first["diagnostic"] = recording_diagnostic(query, wav)
+            return first
     if conv is None and store.voice_limit_reached(env.db, env.tenant):
-        return _payload(None, "ended", lang, message=_t(lang, "voice_limit_reached"))
+        return _payload(None, "ended", lang, message=_t(lang, "voice_limit_reached"),
+                        diagnostic=recording_diagnostic(query, wav))
     ok, _reason = voice_mod.validate_wav(wav)
     if not ok:
-        return _payload(conv, "error", lang, message=_t(lang, "voice_wav_error"))
+        return _payload(conv, "error", lang, message=_t(lang, "voice_wav_error"),
+                        diagnostic=recording_diagnostic(query, wav))
     try:
         transcript, _raw = _client("TRANSCRIBE_CLIENT", voice_mod.TranscriptionClient).transcribe(wav)
     except Exception:
-        return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"))
+        return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"),
+                        diagnostic=recording_diagnostic(query, wav))
     transcript = (transcript or "").strip()
     if not transcript:
-        return _payload(conv, "error", lang, message=_t(lang, "voice_empty"))
+        return _payload(conv, "error", lang, message=_t(lang, "voice_empty"),
+                        diagnostic=recording_diagnostic(query, wav))
     return handle_text(env, {"text": transcript, "conversation_id": cid})
 
 
@@ -289,6 +330,9 @@ def html_body(data, csrf):
                      ("message", "voice-message"), ("understood", "voice-understood")):
         if data.get(key):
             parts.append('<p class="%s">%s</p>' % (css, esc(data[key])))
+    if data.get("link"):
+        parts.append('<p class="voice-settings-first"><a href="%s">%s</a></p>'
+                     % (esc(data["link"]), esc(data.get("link_text", ""))))
     cid = data.get("conversation_id", "")
     hidden = ('<input type="hidden" name="csrf_token" value="%s">'
               '<input type="hidden" name="conversation_id" value="%s">' % (esc(csrf), esc(cid)))

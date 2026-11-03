@@ -208,18 +208,19 @@ class PanelMarkupTest(VoiceTestCase):
             response = self.client.get("/", accept_language=lang)
             self.assertIn("charset=utf-8", response.headers["content-type"])
             header = re.search(r'<button id="voiceFalarHeader".*?</button>', response.body).group(0)
-            self.assertIn("\U0001F399", header)
+            # item 4f (U7): the icon is an inline SVG, no emoji
+            self.assertIn("<svg", header)
+            self.assertNotIn("\U0001F399", header)
             self.assertNotIn("ð", header)
             self.assertRegex(header, r"</span> <span data-i18n=\"voice_falar\">%s</span>" % label)
-            self.assertEqual(header.encode("utf-8").count("\U0001F399".encode("utf-8")), 1)
         raw = self.client.get("/").body.encode("utf-8")
-        self.assertIn(b"\xf0\x9f\x8e\x99", raw)
+        self.assertNotIn(b"\xf0\x9f\x8e\x99", raw)
         self.assertNotIn(b"\xc3\xb0\xc2\x9f", raw, "no double-encoded icon")
 
     def test_the_round_phone_button_is_a_labelled_microphone(self):
         body = self.client.get("/", accept_language="en-GB").body
         self.assertRegex(tag(body, "voiceFalar"), r'aria-label="Speak"')
-        self.assertIn("\U0001F399", re.search(r'<button id="voiceFalar".*?</button>', body).group(0))
+        self.assertIn("<svg", re.search(r'<button id="voiceFalar".*?</button>', body).group(0))
         compact = re.sub(r"\s+", "", CSS)
         self.assertIn("border-radius:50%", compact)
         self.assertIn("@media(min-width:1024px){.voice-falar-fixed{display:none}.voice-falar-header{display:inline-flex}", compact)

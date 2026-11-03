@@ -14,7 +14,13 @@
   var form = $("voiceTextForm");
   var input = $("voiceTextInput");
   var convId = $("voiceConvId");
+  var diagEl = $("voiceDiag");
+  var workingEl = $("voiceWorking");
+  var backdrop = $("voiceBackdrop");
+  var settingsFirst = $("voiceSettingsFirst");
   if (!panel || !form) { return; }
+  var sendBtn = form.querySelector("button[type=submit]");
+  var sendLabel = sendBtn ? sendBtn.textContent : "";
   var csrf = form.querySelector("input[name=csrf_token]").value;
   var TARGET_RATE = 16000;
   var CUTOFF = 0.45;
@@ -114,6 +120,38 @@
 
   function openPanel() { panel.hidden = false; }
 
+  // The dimmed page behind the sheet on wide screens. A tap on it does nothing.
+  function setBackdrop(on) { if (backdrop) { backdrop.hidden = !on; } }
+
+  // Waiting is always visible: send is disabled and says so, and a line says the same.
+  function setBusy(on) {
+    busy = on;
+    if (sendBtn) {
+      sendBtn.disabled = on;
+      sendBtn.textContent = on ? panel.getAttribute("data-thinking") : sendLabel;
+    }
+    if (workingEl) { setText(workingEl, on ? panel.getAttribute("data-thinking") : ""); }
+    if (on) { setText(diagEl, ""); }
+  }
+
+  // Numbers only, from the server's answer: rate, seconds, level.
+  function showDiagnostic(d) {
+    if (!diagEl) { return; }
+    if (!d) { setText(diagEl, ""); return; }
+    var none = "\u2014";
+    var line = panel.getAttribute("data-diag-line") || "";
+    line = line.replace("{rate}", d.sample_rate ? d.sample_rate : none)
+      .replace("{seconds}", d.duration_seconds !== undefined && d.duration_seconds !== null ? d.duration_seconds : none)
+      .replace("{peak}", d.peak !== undefined && d.peak !== null ? d.peak : none);
+    setText(diagEl, line);
+  }
+
+  // No saved settings: one line and a link, nothing to type.
+  function showSettingsFirst() {
+    if (settingsFirst) { settingsFirst.hidden = false; }
+    form.hidden = true;
+  }
+
   function releaseMic() {
     listening = false;
     try { if (proc) { proc.disconnect(); proc.onaudioprocess = null; } } catch (e) {}
@@ -131,12 +169,13 @@
 
   function resetView() {
     setText(transcriptEl, ""); setText(questionEl, ""); setText(readbackEl, "");
+    setText(diagEl, ""); setText(workingEl, "");
     confirmBtn.hidden = true;
     convId.value = "";
   }
 
   function closePanel(reload) {
-    stopSpeech(); releaseMic(); panel.hidden = true; resetView();
+    stopSpeech(); releaseMic(); panel.hidden = true; setBackdrop(false); resetView();
     if (reload) { window.location.reload(); }
   }
 
@@ -185,16 +224,29 @@
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString()
-    }).then(function (r) { return r.json(); });
+    }).then(readAnswer);
   }
 
+  // An answer the server sent is never "No connection": 413 is too long, a non-JSON answer is a refusal.
+  function readAnswer(r) {
+    if (r.status === 413) { return { state: "error", message: panel.getAttribute("data-too-long") }; }
+    return r.text().then(function (text) {
+      try { return JSON.parse(text); } catch (e) {
+        return { state: "error", message: panel.getAttribute("data-server-refused") };
+      }
+    });
+  }
+
+  // Only a request that never reached the server shows the connection message.
   function failed() {
-    busy = false;
+    setBusy(false);
     setText(questionEl, panel.getAttribute("data-network-error"));
   }
 
   function render(d) {
-    busy = false;
+    setBusy(false);
+    if (d.state === "settings_first") { setText(questionEl, ""); showSettingsFirst(); return; }
+    showDiagnostic(d.diagnostic);
     if (d.conversation_id !== undefined) { convId.value = d.conversation_id; }
     if (d.transcript !== undefined) {
       setText(transcriptEl, d.understood ? d.transcript + "\n" + d.understood : d.transcript);
@@ -225,20 +277,21 @@
   }
 
   function sendText(text) {
-    stopSpeech(); finishListening(false);
     if (busy) { return; }
-    busy = true;
+    stopSpeech(); finishListening(false);
+    setBusy(true);
     post("/voice/extract", { conversation_id: convId.value, text: text }).then(render, failed);
   }
 
   function sendAudio(wav) {
-    busy = true;
+    setBusy(true);
     var url = "/voice/transcribe?csrf_token=" + encodeURIComponent(csrf) +
-      "&format=json&conversation_id=" + encodeURIComponent(convId.value);
+      "&format=json&conversation_id=" + encodeURIComponent(convId.value) +
+      "&sample_rate=" + encodeURIComponent(Math.round(recRate));
     fetch(url, {
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "audio/wav" }, body: wav
-    }).then(function (r) { return r.json(); }).then(render, failed);
+    }).then(readAnswer).then(render, failed);
   }
 
   function finishListening(send) {
@@ -347,6 +400,8 @@
 
   function onFalar() {
     openPanel();
+    setBackdrop(true);
+    if (panel.getAttribute("data-needs-settings") === "1") { showSettingsFirst(); return; }
     if (listening) { finishListening(true); return; }
     stopSpeech();
     prepareAudio();
@@ -359,18 +414,21 @@
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = input.value.trim();
-    if (!text) { return; }
+    if (!text || busy) { return; }
     input.value = "";
     sendText(text);
   });
 
   confirmBtn.addEventListener("click", function () {
+    if (busy) { return; }
     stopSpeech(); finishListening(false);
+    setBusy(true);
     post("/voice/confirm", { conversation_id: convId.value }).then(render, failed);
   });
 
   cancelBtn.addEventListener("click", function () {
     stopSpeech(); finishListening(false);
+    setBusy(true);
     post("/voice/cancel", { conversation_id: convId.value }).then(render, failed);
   });
 })();

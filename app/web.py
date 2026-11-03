@@ -11,12 +11,13 @@ import json
 import os
 import re
 import secrets
+import threading
 from datetime import datetime
 from decimal import Decimal
 from urllib.parse import parse_qsl, quote, unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app import auth, i18n, mail, store
+from app import auth, i18n, mail, store, voice_audio
 from engine.calc import agent_share, calc_month
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
@@ -131,6 +132,11 @@ def format_month(year_month, lang):
 
 
 NL_CURRENT_MONTH_ENV = "APP_NL_CURRENT_MONTH"
+NL_TODAY_ENV = "APP_NL_TODAY"
+
+# The signed-in agent of the request being served, for the one page element
+# that depends on the agent's data (the voice panel's settings check).
+_REQUEST = threading.local()
 
 
 
@@ -144,6 +150,21 @@ def nl_current_month():
     except ZoneInfoNotFoundError:
         today = datetime.now().date()
     return today.strftime("%Y-%m")
+
+
+def nl_today():
+    """Today's date (YYYY-MM-DD) from the Lisbon server date, with test overrides."""
+    forced = os.environ.get(NL_TODAY_ENV, "")
+    if forced and valid_date(forced):
+        return forced
+    month = os.environ.get(NL_CURRENT_MONTH_ENV, "")
+    if month and valid_month(month):
+        return month + "-01"
+    try:
+        today = datetime.now(ZoneInfo("Europe/Lisbon")).date()
+    except ZoneInfoNotFoundError:
+        today = datetime.now().date()
+    return today.isoformat()
 
 
 def add_months(year_month, delta):
@@ -386,46 +407,63 @@ def page(lang, csrf, title, body, current="", signed_in=False):
                 '<input type="hidden" name="csrf_token" value="%s">'
                 '<button type="submit" data-i18n="signout_label">%s</button>'
                 '</form>' % (esc(csrf), esc(i18n.text(lang, "signout_label"))))
+    mic = '<svg class="mic-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="currentColor" focusable="false"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>'
     voice_btn_header = (
         '<button id="voiceFalarHeader" type="button" class="voice-falar-header">'
-        '<span aria-hidden="true">\U0001F399</span> <span data-i18n="voice_falar">%s</span></button>'
-        % esc(i18n.text(lang, "voice_falar")))
+        '<span aria-hidden="true">%s</span> <span data-i18n="voice_falar">%s</span></button>'
+        % (mic, esc(i18n.text(lang, "voice_falar"))))
     voice_btn_fixed = (
         '<button id="voiceFalar" type="button" class="voice-falar-fixed" aria-label="%s">'
-        '<span aria-hidden="true">\U0001F399</span></button>'
-        % esc(i18n.text(lang, "voice_falar")))
+        '<span aria-hidden="true">%s</span></button>'
+        % (esc(i18n.text(lang, "voice_falar")), mic))
     voice_panel = ""
     voice_js = ""
     if signed_in:
+        tenant_id = getattr(_REQUEST, "tenant_id", None)
+        needs_settings = tenant_id is not None and store.get_settings(DB_PATH, tenant_id=tenant_id) is None
         voice_panel = (
+            '<div id="voiceBackdrop" class="voice-backdrop" hidden></div>'
             '<div id="voicePanel" class="voice-panel" role="dialog" hidden aria-label="%s"'
-            ' data-network-error="%s" data-mic-blocked="%s" data-tap-answer="%s">'
+            ' data-network-error="%s" data-mic-blocked="%s" data-tap-answer="%s"'
+            ' data-too-long="%s" data-server-refused="%s" data-thinking="%s" data-diag-line="%s"'
+            ' data-needs-settings="%s">'
             '<div class="voice-panel__inner">'
             '<div id="voiceTranscript" class="voice-transcript"></div>'
+            '<div id="voiceWorking" class="voice-working" role="status" aria-live="polite"></div>'
             '<div id="voiceQuestion" class="voice-question"></div>'
             '<div id="voiceReadback" class="voice-readback"></div>'
-            '<div class="voice-actions">'
-            '<button type="button" id="voiceConfirmBtn" hidden data-i18n="btn_confirm">%s</button>'
-            '<button type="button" id="voiceCancelBtn" data-i18n="voice_cancel_btn">%s</button></div>'
+            '<div id="voiceDiag" class="voice-diag"></div>'
+            '<p id="voiceSettingsFirst" class="voice-settings-first" hidden>%s <a href="/settings">%s</a></p>'
             '<form id="voiceTextForm" method="post" action="/voice/extract">'
             '<input type="hidden" name="csrf_token" value="%s">'
             '<input type="hidden" name="conversation_id" id="voiceConvId" value="">'
             '<input type="text" name="text" id="voiceTextInput" autocomplete="off" placeholder="%s" aria-label="%s">'
             '<button type="submit" data-i18n="voice_send">%s</button></form>'
+            '<div class="voice-actions">'
+            '<button type="button" id="voiceConfirmBtn" class="btn-primary" hidden data-i18n="btn_confirm">%s</button>'
+            '<button type="button" id="voiceCancelBtn" class="btn-secondary" data-i18n="voice_cancel_btn">%s</button></div>'
             '</div></div>'
             % (esc(i18n.text(lang, "voice_panel_label")),
                esc(i18n.text(lang, "voice_network_error")),
                esc(i18n.text(lang, "voice_mic_blocked")),
                esc(i18n.text(lang, "voice_tap_answer")),
-               esc(i18n.text(lang, "btn_confirm")),
-               esc(i18n.text(lang, "voice_cancel_btn")),
+               esc(i18n.text(lang, "voice_too_long")),
+               esc(i18n.text(lang, "voice_server_refused")),
+               esc(i18n.text(lang, "voice_thinking")),
+               esc(i18n.text(lang, "voice_diag_line")),
+               "1" if needs_settings else "0",
+               esc(i18n.text(lang, "voice_settings_first")),
+               esc(i18n.text(lang, "voice_settings_link")),
                esc(csrf),
                esc(i18n.text(lang, "voice_placeholder")),
                esc(i18n.text(lang, "voice_placeholder")),
-               esc(i18n.text(lang, "voice_send"))))
+               esc(i18n.text(lang, "voice_send")),
+               esc(i18n.text(lang, "btn_confirm")),
+               esc(i18n.text(lang, "voice_cancel_btn"))))
         voice_js = '<script src="/static/voice.js" defer></script>'
     if signed_in:
-        header = '<div class="brand">Agentimo</div>%s%s%s%s' % (nav(lang, current), lang_switch(lang, csrf), signout_form(), voice_btn_header)
+        header = ('<div class="brand">Agentimo</div>%s<div class="header-tools">%s%s</div>%s'
+                  % (nav(lang, current), lang_switch(lang, csrf), signout_form(), voice_btn_header))
         body = body + voice_panel + voice_btn_fixed + voice_js
     else:
         header = '<div class="brand">Agentimo</div>%s' % lang_switch(lang, csrf)
@@ -722,7 +760,8 @@ def forecast_section(lang, month, deals, expenses_cents):
         "<dl>"
         '<dt data-i18n="m_commission">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
-        '<dt data-i18n="m_protected">%s</dt><dd>%s (%s %s; %s %s; %s %s)</dd>'
+        '<dt data-i18n="m_set_aside">%s</dt><dd>%s</dd>'
+        '<dd class="money-breakdown">%s %s \u00b7 %s %s \u00b7 %s %s</dd>'
         '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
         "</dl>"
         '<h3 data-i18n="m_deals">%s</h3><table class="deal-table"><thead><tr><th data-i18n="th_name">%s</th><th data-i18n="th_stage">%s</th><th data-i18n="th_amount">%s</th><th data-i18n="th_escritura">%s</th><th data-i18n="th_cpcv">%s</th></tr></thead><tbody>%s</tbody></table>%s</section>'
@@ -732,7 +771,7 @@ def forecast_section(lang, month, deals, expenses_cents):
             esc(format_amount(result["commission"], lang)),
             esc(i18n.text(lang, "m_bank")),
             esc(format_amount(result["bank_inflow"], lang)),
-            esc(i18n.text(lang, "m_protected")),
+            esc(i18n.text(lang, "m_set_aside")),
             esc(format_amount(result["protected_money"], lang)),
             esc(i18n.text(lang, "b_iva")),
             esc(format_amount(breakdown["iva"], lang)),
@@ -747,6 +786,88 @@ def forecast_section(lang, month, deals, expenses_cents):
             rows, cards_html,
         )
     )
+
+
+def _month_really_and_set_aside(deals, expenses_cents):
+    """(really yours, money to set aside) of one month's deals, as its card shows them."""
+    if not deals:
+        return 0, 0
+    result = month_figures(deals, expenses_cents)
+    return result["really_available"], result["protected_money"]
+
+
+def forecast_strip_figures(active_deals, expenses_cents, today):
+    """The three figures of the forecast strip, from the same engine.calc results the cards use.
+
+    The window is the month of ``today`` and the next two. A total is the sum of
+    the matching card lines. The estimated share of a total is what the deals with
+    an estimated escritura date contribute to it, each taken from engine.calc on
+    its own (bank inflow less the money to set aside; expenses belong to no deal).
+    """
+    start = today[:7]
+    window = [add_months(start, i) for i in range(3)]
+    in_window = [d for d in active_deals if derive_month(d.get("escritura_date", "")) in window]
+    if not in_window:
+        return None
+
+    def totals(deals):
+        really = aside = 0
+        for month in window:
+            r, a = _month_really_and_set_aside(
+                [d for d in deals if derive_month(d.get("escritura_date", "")) == month], expenses_cents)
+            really += r
+            aside += a
+        return really, aside
+
+    really, aside = totals(in_window)
+    est_really = est_aside = 0
+    for deal in in_window:
+        if deal.get("escritura_estimada"):
+            one = month_figures([deal], 0)
+            est_really += one["bank_inflow"] - one["protected_money"]
+            est_aside += one["protected_money"]
+    future = sorted((d for d in active_deals if d.get("escritura_date", "") >= today),
+                    key=lambda d: (d["escritura_date"], d["id"]))
+    nxt = None
+    if future:
+        deal = future[0]
+        nxt = {"date": deal["escritura_date"], "estimated": bool(deal.get("escritura_estimada")),
+               "amount": month_figures([deal], expenses_cents)["bank_inflow"]}
+    return {"really": really, "really_estimated": est_really,
+            "aside": aside, "aside_estimated": est_aside, "next": nxt}
+
+
+def forecast_strip(lang, active_deals, expenses_cents):
+    """The strip above the month cards: three figures, or one line when nothing falls in the window."""
+    figures = forecast_strip_figures(active_deals, expenses_cents, nl_today())
+    if figures is None:
+        return '<p class="forecast-strip forecast-strip--empty" data-i18n="strip_none">%s</p>' % esc(i18n.text(lang, "strip_none"))
+
+    def estimated_note(cents):
+        if not cents:
+            return ""
+        shown = format_amount(cents, lang)
+        if cents % 100 == 0:
+            shown = shown.replace(",00", "").replace(".00", "")
+        return '<small class="strip-note">%s</small>' % esc(i18n.text(lang, "strip_estimated") % shown)
+
+    def item(key, value, note, css):
+        return ('<div class="strip-item %s"><span class="strip-label" data-i18n="%s">%s</span>'
+                '<strong class="strip-value">%s</strong>%s</div>'
+                % (css, key, esc(i18n.text(lang, key)), esc(value), note))
+
+    nxt = figures["next"]
+    if nxt is None:
+        next_value, next_note = "\u2014", ""
+    else:
+        date = esc(format_date(nxt["date"], lang))
+        if nxt["estimated"]:
+            date += " " + esc(i18n.text(lang, "voice_estimada"))
+        next_value, next_note = format_amount(nxt["amount"], lang), '<small class="strip-note">%s</small>' % date
+    return ('<div class="forecast-strip">%s%s%s</div>' % (
+        item("strip_yours", format_amount(figures["really"], lang), estimated_note(figures["really_estimated"]), "strip-yours"),
+        item("strip_next", next_value, next_note, "strip-next"),
+        item("strip_aside", format_amount(figures["aside"], lang), estimated_note(figures["aside_estimated"]), "strip-aside")))
 
 
 def edit_form_html(lang, csrf, deal_id, values, errors):
@@ -960,6 +1081,7 @@ MAX_AUDIO_BODY_BYTES = 16000 * 2 * 61 + 4096
 
 def application(environ, start_response):
     session, new_cookies = session_for(environ)
+    _REQUEST.tenant_id = session.get("tenant_id") if session.get("authenticated") else None
     lang = language_for(environ)
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/") or "/"
@@ -1075,7 +1197,11 @@ def application(environ, start_response):
                     refusal = {"state": "error", "lang": lang,
                                "conversation_id": query.get("conversation_id", ""),
                                "transcript": "",
-                               "message": i18n.text(lang, "voice_wav_error")}
+                               "message": i18n.text(lang, "voice_wav_error"),
+                               "diagnostic": {
+                                   "sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
+                                   "duration_seconds": round(max(length - 44, 0) / 32000.0, 2),
+                                   "peak": None}}
                     if as_json:
                         return json_reply("200 OK", refusal)
                     return respond("200 OK", page(
@@ -1263,8 +1389,9 @@ def application(environ, start_response):
             items_f = "".join('<li><a href="/deals/edit?id=%d">%s</a> \u00b7 %s</li>' % (d["id"], esc(d["name"]), esc(i18n.text(lang, "st_fallen"))) for d in fallen)
             fallen_html = '<details><summary data-i18n="fallen_title">%s (%d)</summary><ul>%s</ul></details>' % (esc(i18n.text(lang, "fallen_title")), len(fallen), items_f)
         body = page(lang, session["csrf"], i18n.text(lang, "home_title"),
-                    '<h1 data-i18n="home_title">%s</h1><div class="forecast-grid">%s</div>%s'
-                    % (esc(i18n.text(lang, "home_title")), sections, fallen_html),
+                    '<h1 data-i18n="home_title">%s</h1>%s<div class="forecast-grid">%s</div>%s'
+                    % (esc(i18n.text(lang, "home_title")),
+                       forecast_strip(lang, active_deals, expenses), sections, fallen_html),
                     "/", signed_in=True)
         return respond("200 OK", body)
 
