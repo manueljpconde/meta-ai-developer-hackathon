@@ -360,6 +360,7 @@
     } catch (e) { micBlocked(); }
   }
 
+  // AudioWorklet is present here: a module or node that fails is shown in the panel, never replaced by the fallback.
   function useWorklet() {
     try {
       node = new AudioWorkletNode(ctx, "agentimo-recorder", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
@@ -367,14 +368,14 @@
       source.connect(node);
       node.connect(ctx.destination);
       startRecording();
-    } catch (e) { useScriptProcessor(); }
+    } catch (e) { micBlocked(); }
   }
 
   function attach(s) {
     stream = s;
     source = ctx.createMediaStreamSource(s);
     if (ctx.audioWorklet && typeof AudioWorkletNode === "function") {
-      ctx.audioWorklet.addModule(WORKLET_URL).then(useWorklet, useScriptProcessor);
+      ctx.audioWorklet.addModule(WORKLET_URL).then(useWorklet, micBlocked);
     } else { useScriptProcessor(); }
   }
 

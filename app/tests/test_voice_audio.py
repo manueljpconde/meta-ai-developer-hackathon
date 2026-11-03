@@ -209,14 +209,29 @@ class ServedScriptRecordingTest(AppTestCase):
         self.assertNotIn("blob:", SCRIPT)
         self.assertNotIn("data:", SCRIPT)
 
+    def test_a_failed_worklet_is_reported_and_never_replaced_by_the_fallback(self):
+        attach = SCRIPT[SCRIPT.index("function attach("):SCRIPT.index("function prepareAudio()")]
+        worklet = SCRIPT[SCRIPT.index("function useWorklet()"):SCRIPT.index("function attach(")]
+        # addModule rejecting: the panel's microphone message, not the ScriptProcessor
+        self.assertRegex(attach, r"addModule\(WORKLET_URL\)\.then\(useWorklet, micBlocked\)")
+        # the AudioWorkletNode constructor throwing: the same message
+        self.assertIn("catch (e) { micBlocked(); }", worklet)
+        self.assertNotIn("useScriptProcessor", worklet)
+        # the one call to the fallback sits in the else branch, where AudioWorklet is missing
+        self.assertEqual(attach.count("useScriptProcessor"), 1)
+        self.assertIn("} else { useScriptProcessor(); }", attach)
+        # the message comes from the panel's data attribute, which carries the page language
+        mic = SCRIPT[SCRIPT.index("function micBlocked()"):SCRIPT.index("function useScriptProcessor()")]
+        self.assertIn('panel.getAttribute("data-mic-blocked")', mic)
+
     def test_the_fallback_is_used_only_where_audioworklet_is_missing(self):
         attach = SCRIPT[SCRIPT.index("function attach("):SCRIPT.index("function prepareAudio()")]
         self.assertIn('ctx.audioWorklet && typeof AudioWorkletNode === "function"', attach)
         self.assertEqual(SCRIPT.count("createScriptProcessor"), 1)
         fallback = SCRIPT[SCRIPT.index("function useScriptProcessor()"):SCRIPT.index("function attach(")]
         self.assertIn("createScriptProcessor(4096, 1, 1)", fallback)
-        # a worklet that cannot load falls back too
-        self.assertRegex(attach, r"addModule\(WORKLET_URL\)\.then\(.*useScriptProcessor", )
+        # the fallback is reached from the branch where AudioWorklet is missing, and from nowhere else
+        self.assertEqual(SCRIPT.count("useScriptProcessor()"), 2)  # its definition and the one call
         branch = attach[attach.index("if (ctx.audioWorklet"):]
         self.assertLess(branch.index("addModule"), branch.index("useScriptProcessor"))
         self.assertIn("else { useScriptProcessor(); }", attach)
