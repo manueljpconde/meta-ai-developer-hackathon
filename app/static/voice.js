@@ -1,5 +1,7 @@
 (function () {
   "use strict";
+  // The same file is the AudioWorklet module: there it only registers the recorder.
+  if (typeof registerProcessor === "function" && typeof document === "undefined") { registerRecorder(); return; }
   var $ = function (id) { return document.getElementById(id); };
   var panel = $("voicePanel");
   var fab = $("voiceFalar");
@@ -15,12 +17,15 @@
   if (!panel || !form) { return; }
   var csrf = form.querySelector("input[name=csrf_token]").value;
   var TARGET_RATE = 16000;
+  var CUTOFF = 0.45;
+  var HALF_WIDTH = 6;
+  var WORKLET_URL = "/static/voice.js";
   var MAX_SECONDS = 55;
   var SILENCE_SECONDS = 1.4;
   var NO_SPEECH_SECONDS = 10;
   var THRESHOLD = 0.02;
 
-  var stream = null, ctx = null, source = null, proc = null;
+  var stream = null, ctx = null, source = null, proc = null, node = null, recRate = 0;
   var chunks = [], total = 0, speechSeen = false, silent = 0, listening = false;
   var speakTimer = null, busy = false;
 
@@ -43,18 +48,60 @@
     return buf;
   }
 
+  // Windowed-sinc weight at distance d (input samples) from the output position.
+  function weight(d, cutoff, half) {
+    var x = 2 * cutoff * d;
+    var s = x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
+    return 2 * cutoff * s * (0.5 + 0.5 * Math.cos(Math.PI * d / half));
+  }
+
+  // Samples taken at `rate` Hz, returned at 16 kHz: output i sits at input i * rate / 16000.
   function downsample(samples, rate) {
     if (rate === TARGET_RATE) { return samples; }
     var ratio = rate / TARGET_RATE;
-    var len = Math.floor(samples.length / ratio);
+    var len = Math.floor(samples.length * TARGET_RATE / rate);
+    var cutoff = CUTOFF * Math.min(rate, TARGET_RATE) / rate;
+    var half = HALF_WIDTH * Math.max(1, ratio);
     var out = new Float32Array(len);
     for (var i = 0; i < len; i++) {
-      var start = Math.floor(i * ratio), end = Math.min(samples.length, Math.floor((i + 1) * ratio));
-      var sum = 0, count = 0;
-      for (var j = start; j < end; j++) { sum += samples[j]; count++; }
-      out[i] = count ? sum / count : 0;
+      var centre = i * ratio;
+      var first = Math.max(Math.ceil(centre - half), 0);
+      var last = Math.min(Math.floor(centre + half), samples.length - 1);
+      var total = 0, norm = 0;
+      for (var j = first; j <= last; j++) {
+        var w = weight(centre - j, cutoff, half);
+        total += w * samples[j];
+        norm += w;
+      }
+      out[i] = norm ? total / norm : 0;
     }
     return out;
+  }
+
+  // Runs inside the AudioWorklet: hands the microphone's samples to the page in blocks.
+  function registerRecorder() {
+    class Recorder extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.block = new Float32Array(2048);
+        this.fill = 0;
+      }
+      process(inputs) {
+        var channel = inputs[0] && inputs[0][0];
+        if (channel) {
+          for (var i = 0; i < channel.length; i++) {
+            this.block[this.fill++] = channel[i];
+            if (this.fill === this.block.length) {
+              this.port.postMessage(this.block, [this.block.buffer]);
+              this.block = new Float32Array(2048);
+              this.fill = 0;
+            }
+          }
+        }
+        return true;
+      }
+    }
+    registerProcessor("agentimo-recorder", Recorder);
   }
 
   function merge() {
@@ -70,10 +117,11 @@
   function releaseMic() {
     listening = false;
     try { if (proc) { proc.disconnect(); proc.onaudioprocess = null; } } catch (e) {}
+    try { if (node) { node.disconnect(); node.port.onmessage = null; } } catch (e) {}
     try { if (source) { source.disconnect(); } } catch (e) {}
     try { if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); } } catch (e) {}
     try { if (ctx && ctx.close) { ctx.close(); } } catch (e) {}
-    stream = ctx = source = proc = null;
+    stream = ctx = source = proc = node = null;
   }
 
   function stopSpeech() {
@@ -197,7 +245,9 @@
     if (!listening) { return; }
     listening = false;
     if (send && total > 0) {
-      var samples = downsample(merge(), ctx ? ctx.sampleRate : TARGET_RATE);
+      var rate = recRate;
+      if (!(rate > 0)) { chunks = []; total = 0; micBlocked(); return; }
+      var samples = downsample(merge(), rate);
       chunks = []; total = 0;
       sendAudio(encodeWav(samples));
     } else {
@@ -205,14 +255,22 @@
     }
   }
 
-  function onAudio(e) {
+  // The rate the samples really have: the running context's, else the audio track's. Never assumed.
+  function realRate() {
+    var rate = ctx ? ctx.sampleRate : 0;
+    if (!(rate > 0) && stream) {
+      try { rate = stream.getAudioTracks()[0].getSettings().sampleRate; } catch (e) { rate = 0; }
+    }
+    return rate > 0 ? rate : 0;
+  }
+
+  function onSamples(data) {
     if (!listening) { return; }
-    var data = new Float32Array(e.inputBuffer.getChannelData(0));
     chunks.push(data); total += data.length;
     var sum = 0;
     for (var i = 0; i < data.length; i++) { sum += data[i] * data[i]; }
     var rms = Math.sqrt(sum / data.length);
-    var rate = ctx.sampleRate;
+    var rate = recRate;
     if (rms > THRESHOLD) { speechSeen = true; silent = 0; } else { silent += data.length; }
     if (speechSeen && silent > SILENCE_SECONDS * rate) { finishListening(true); return; }
     if (total > MAX_SECONDS * rate) { finishListening(true); return; }
@@ -225,6 +283,8 @@
   }
 
   function startRecording() {
+    recRate = realRate();
+    if (!(recRate > 0)) { micBlocked(); return; }
     chunks = []; total = 0; speechSeen = false; silent = 0; listening = true;
     if (ctx && ctx.state === "suspended" && ctx.resume) {
       var resumed = ctx.resume();
@@ -237,28 +297,60 @@
     setText(questionEl, panel.getAttribute("data-mic-blocked"));
   }
 
-  function listen() {
-    if (busy || listening || panel.hidden) { return; }
-    if (stream && ctx) { startRecording(); return; }
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { micBlocked(); return; }
-    try { ctx = new AC(); } catch (e) { micBlocked(); return; }
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
-      stream = s;
-      source = ctx.createMediaStreamSource(s);
+  function useScriptProcessor() {
+    try {
       proc = ctx.createScriptProcessor(4096, 1, 1);
-      proc.onaudioprocess = onAudio;
+      proc.onaudioprocess = function (e) { onSamples(new Float32Array(e.inputBuffer.getChannelData(0))); };
       source.connect(proc);
       proc.connect(ctx.destination);
       startRecording();
-    }, micBlocked);
+    } catch (e) { micBlocked(); }
+  }
+
+  function useWorklet() {
+    try {
+      node = new AudioWorkletNode(ctx, "agentimo-recorder", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
+      node.port.onmessage = function (e) { onSamples(e.data); };
+      source.connect(node);
+      node.connect(ctx.destination);
+      startRecording();
+    } catch (e) { useScriptProcessor(); }
+  }
+
+  function attach(s) {
+    stream = s;
+    source = ctx.createMediaStreamSource(s);
+    if (ctx.audioWorklet && typeof AudioWorkletNode === "function") {
+      ctx.audioWorklet.addModule(WORKLET_URL).then(useWorklet, useScriptProcessor);
+    } else { useScriptProcessor(); }
+  }
+
+  // Inside the tap, before the microphone is asked for: iOS leaves a context made later suspended.
+  function prepareAudio() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!ctx && AC) {
+      try { ctx = new AC(); } catch (e) { ctx = null; }
+    }
+    if (ctx && ctx.state !== "running" && ctx.resume) {
+      var resumed = ctx.resume();
+      if (resumed && resumed.catch) { resumed.catch(function () {}); }
+    }
+  }
+
+  function listen(fromTap) {
+    if (busy || listening || panel.hidden) { return; }
+    if (stream && ctx) { startRecording(); return; }
+    if (!ctx) { if (fromTap) { micBlocked(); } else { tapToAnswer(); } return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { micBlocked(); return; }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(attach, micBlocked);
   }
 
   function onFalar() {
     openPanel();
     if (listening) { finishListening(true); return; }
     stopSpeech();
-    listen();
+    prepareAudio();
+    listen(true);
   }
 
   fab.addEventListener("click", onFalar);
