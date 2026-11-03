@@ -1194,14 +1194,18 @@ def application(environ, start_response):
             fields = dict(query)
             if length < 0 or length > MAX_AUDIO_BODY_BYTES:
                 if csrf_ok(fields):
+                    # The body is read here only to measure the diagnostic
+                    # numbers; nothing is stored, written or logged.
+                    wav = environ.get("wsgi.input").read(length) if length > 0 else b""
+                    seconds, peak = voice_audio.wav_stats(wav)
                     refusal = {"state": "error", "lang": lang,
                                "conversation_id": query.get("conversation_id", ""),
                                "transcript": "",
                                "message": i18n.text(lang, "voice_wav_error"),
                                "diagnostic": {
                                    "sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
-                                   "duration_seconds": round(max(length - 44, 0) / 32000.0, 2),
-                                   "peak": None}}
+                                   "duration_seconds": seconds,
+                                   "peak": peak}}
                     if as_json:
                         return json_reply("200 OK", refusal)
                     return respond("200 OK", page(
