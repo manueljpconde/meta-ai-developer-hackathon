@@ -720,6 +720,15 @@ class ForecastStripTest(StripBase):
         # only the strip is empty: the card for the far month still shows
         self.assertIn("fevereiro de 2027", self.home("pt-PT"))
 
+    def test_an_agent_with_no_deals_gets_the_empty_strip_and_no_prompt(self):
+        for lang, line in (("pt-PT", "Nada previsto nos próximos 3 meses."), ("en-GB", "Nothing expected in the next 3 months.")):
+            body = self.home(lang)
+            main = body[body.index("<main>"):body.index('<div id="voiceBackdrop"')]
+            found = re.search(r'<p class="forecast-strip forecast-strip--empty" data-i18n="strip_none">(.*?)</p>', main)
+            self.assertEqual(found.group(1), line)
+            self.assertNotIn("strip-item", main)
+            self.assertNotRegex(main, r'home_empty|href="/deals/new"|<button|\?')
+
     def test_the_labels_in_pt_and_en_and_the_layout_stacks_on_phones_and_runs_in_one_row_from_1024(self):
         self.window_deals()
         for lang, labels in (("pt-PT", ("Fica para ti nos próximos 3 meses", "Próximo recebimento",

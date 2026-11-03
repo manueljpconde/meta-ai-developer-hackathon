@@ -1359,12 +1359,9 @@ def application(environ, start_response):
         if not months:
             body = page(
                 lang, session["csrf"], i18n.text(lang, "home_title"),
-                '<h1 data-i18n="home_title">%s</h1>'
-                '<p data-i18n="home_empty">%s</p>'
-                '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
+                '<h1 data-i18n="home_title">%s</h1>%s'
                 % (esc(i18n.text(lang, "home_title")),
-                   esc(i18n.text(lang, "home_empty")),
-                   esc(i18n.text(lang, "home_new"))),
+                   forecast_strip(lang, [], settings["expenses_cents"] if settings else 0)),
                 "/", signed_in=True,
             )
             return respond("200 OK", body)
