@@ -848,7 +848,7 @@ def forecast_strip(lang, active_deals, expenses_cents):
             return ""
         shown = format_amount(cents, lang)
         if cents % 100 == 0:
-            shown = shown.replace(",00", "").replace(".00", "")
+            shown = shown.replace(",00 \u20ac", " \u20ac") if lang == "pt-PT" else shown[:-3]
         return '<small class="strip-note">%s</small>' % esc(i18n.text(lang, "strip_estimated") % shown)
 
     def item(key, value, note, css):

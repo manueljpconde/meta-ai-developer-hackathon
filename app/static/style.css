@@ -296,10 +296,11 @@ header .header-tools form{margin:0}
 .strip-note{color:#5f6f6a}
 .forecast-grid dt,.forecast-grid dd{white-space:nowrap;margin:0}
 .forecast-grid dd.money-breakdown{grid-column:1 / -1;padding-left:1.25rem;font-size:0.9rem;color:#5f6f6a;white-space:normal}
-.deal-table td:first-child{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.deal-table td:first-child a{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
 
 @media (min-width: 1024px) {
   .forecast-strip{grid-template-columns:repeat(3, 1fr)}
+  .forecast-grid{grid-template-columns:repeat(auto-fit, minmax(18rem, 1fr))}
   .voice-backdrop{display:block;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(22,48,44,0.45);z-index:20}
   .voice-panel{height:auto;max-height:70vh;overflow-y:auto;border-radius:16px 16px 0 0;box-shadow:0 -8px 32px rgba(0,0,0,0.25);max-width:640px}
 }
