@@ -1,4 +1,6 @@
 """Owner hotfix 1b: an expense by voice, through the one Falar button (item 6 B4, B5)."""
+import unittest
+
 from app import store
 from app.tests.test_item6_expenses import ExpenseBase
 from app.tests.voice_support import ScriptedExtraction, stub_clients
@@ -88,3 +90,17 @@ class VoiceExpenseTest(ExpenseBase):
         asked, = self.talk(ScriptedExtraction(expense(description="Almoço", amount=30, deal="Segredo")), "almoço do Segredo")
         self.assertEqual(asked["state"], "ask")
         self.assertTrue(asked["question"].endswith("Qual destes negócios: Meu?"), asked["question"])
+
+
+class TranscribedYesTest(unittest.TestCase):
+    """Demo recording 2026-11-04: Muse Voice returned "Yes," and the read-back was never saved."""
+
+    def test_a_yes_or_sim_with_any_trailing_punctuation_saves(self):
+        from app import voice_flow as vf
+        for said in ("Yes,", "yes?", "Sim,", "sim;", "Sim!", "Yes.", "  sim  "):
+            self.assertTrue(vf.is_yes(said), said)
+        for said in ("Não,", "no?"):
+            self.assertTrue(vf.is_no(said), said)
+        for said in ("Cancelar,", "cancel."):
+            self.assertTrue(vf.is_cancel(said), said)
+        self.assertFalse(vf.is_yes("yes, but the amount is wrong"))

@@ -453,7 +453,7 @@ def missing_for(kind, extracted):
 # ── Spoken words ─────────────────────────────────────────────────
 
 def _word(text):
-    return re.sub(r"[\s.!]+$", "", text.strip().lower())
+    return re.sub(r"[\s.,!?;:]+$", "", text.strip().lower())
 
 
 def is_cancel(text):
