@@ -365,3 +365,32 @@ class OneFalarButtonTest(ExpenseBase):
                 last = (media, decl)
         self.assertIn("1023px", last[0])
         self.assertIn("display:none", last[1])
+
+
+class ListeningAfterAQuestionTest(ExpenseBase):
+    """iPhone 2026-11-04: after a spoken question the answer never reached the server."""
+
+    def script(self):
+        from app.tests.test_item4f import SCRIPT
+        return SCRIPT
+
+    def test_the_panel_says_when_it_is_listening_in_both_languages(self):
+        for lang, line in (("pt-PT", "A ouvir… fala agora."), ("en-GB", "Listening… speak now.")):
+            self.assertIn('data-listening="%s"' % line, self.home(lang=lang))
+        record = self.script()[self.script().index("function startRecording()"):self.script().index("function micBlocked()")]
+        self.assertIn("showListening(true);", record)
+        finish = self.script()[self.script().index("function finishListening("):self.script().index("function realRate()")]
+        self.assertIn("showListening(false);", finish)
+
+    def test_an_interrupted_context_is_resumed_not_only_a_suspended_one(self):
+        record = self.script()[self.script().index("function startRecording()"):self.script().index("function micBlocked()")]
+        self.assertIn('ctx.state !== "running" && ctx.resume', record)
+
+    def test_a_dead_or_muted_track_is_asked_for_again(self):
+        listen = self.script()[self.script().index("function listen("):self.script().index("function onFalar()")]
+        self.assertIn('track.readyState === "live" && !track.muted', listen)
+        self.assertLess(listen.index("dropStream();"), listen.index("getUserMedia"))
+
+    def test_no_speech_always_shows_the_tap_line_even_under_a_question(self):
+        tap = self.script()[self.script().index("function tapToAnswer()"):self.script().index("function startRecording()")]
+        self.assertIn('setText(workingEl, panel.getAttribute("data-tap-answer"))', tap)

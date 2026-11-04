@@ -441,7 +441,7 @@ def page(lang, csrf, title, body, current="", signed_in=False):
             '<div id="voicePanel" class="voice-panel" role="dialog" hidden aria-label="%s"'
             ' data-network-error="%s" data-mic-blocked="%s" data-tap-answer="%s"'
             ' data-too-long="%s" data-server-refused="%s" data-thinking="%s" data-diag-line="%s"'
-            ' data-needs-settings="%s">'
+            ' data-needs-settings="%s" data-listening="%s">'
             '<div class="voice-panel__inner">'
             '<div id="voiceTranscript" class="voice-transcript"></div>'
             '<div id="voiceWorking" class="voice-working" role="status" aria-live="polite"></div>'
@@ -466,7 +466,7 @@ def page(lang, csrf, title, body, current="", signed_in=False):
                esc(i18n.text(lang, "voice_server_refused")),
                esc(i18n.text(lang, "voice_thinking")),
                esc(i18n.text(lang, "voice_diag_line")),
-               "1" if needs_settings else "0",
+               "1" if needs_settings else "0", esc(i18n.text(lang, "voice_listening")),
                esc(i18n.text(lang, "voice_settings_first")),
                esc(i18n.text(lang, "voice_settings_link")),
                esc(csrf),

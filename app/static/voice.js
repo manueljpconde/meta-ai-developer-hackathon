@@ -152,14 +152,24 @@
     form.hidden = true;
   }
 
-  function releaseMic() {
-    listening = false;
+  function dropStream() {
     try { if (proc) { proc.disconnect(); proc.onaudioprocess = null; } } catch (e) {}
     try { if (node) { node.disconnect(); node.port.onmessage = null; } } catch (e) {}
     try { if (source) { source.disconnect(); } } catch (e) {}
     try { if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); } } catch (e) {}
+    stream = source = proc = node = null;
+  }
+
+  function releaseMic() {
+    listening = false;
+    dropStream();
     try { if (ctx && ctx.close) { ctx.close(); } } catch (e) {}
-    stream = ctx = source = proc = node = null;
+    ctx = null;
+  }
+
+  // While the microphone records, the panel says so: the agent knows when to speak.
+  function showListening(on) {
+    if (workingEl && !busy) { setText(workingEl, on ? panel.getAttribute("data-listening") : ""); }
   }
 
   function stopSpeech() {
@@ -308,6 +318,7 @@
   function finishListening(send) {
     if (!listening) { return; }
     listening = false;
+    showListening(false);
     if (send && total > 0) {
       var rate = recRate;
       if (!(rate > 0)) { chunks = []; total = 0; micBlocked(); return; }
@@ -341,16 +352,20 @@
     if (!speechSeen && total > NO_SPEECH_SECONDS * rate) { finishListening(false); tapToAnswer(); }
   }
 
-  // A browser that will not restart the microphone by itself shows one tap per answer.
+  // A browser that will not restart the microphone by itself shows one tap per answer,
+  // under the question when there is one.
   function tapToAnswer() {
-    if (!questionEl.textContent) { setText(questionEl, panel.getAttribute("data-tap-answer")); }
+    if (workingEl) { setText(workingEl, panel.getAttribute("data-tap-answer")); }
+    else if (!questionEl.textContent) { setText(questionEl, panel.getAttribute("data-tap-answer")); }
   }
 
   function startRecording() {
     recRate = realRate();
     if (!(recRate > 0)) { micBlocked(); return; }
     chunks = []; total = 0; speechSeen = false; silent = 0; listening = true;
-    if (ctx && ctx.state === "suspended" && ctx.resume) {
+    showListening(true);
+    // iOS leaves the context "interrupted" after speaking, not only "suspended".
+    if (ctx && ctx.state !== "running" && ctx.resume) {
       var resumed = ctx.resume();
       if (resumed && resumed.catch) { resumed.catch(function () { listening = false; tapToAnswer(); }); }
     }
@@ -404,7 +419,12 @@
 
   function listen(fromTap) {
     if (busy || listening || panel.hidden) { return; }
-    if (stream && ctx) { startRecording(); return; }
+    if (stream && ctx) {
+      // Safari can end or mute the microphone track after speaking: ask for a live one again.
+      var track = stream.getAudioTracks()[0];
+      if (track && track.readyState === "live" && !track.muted) { startRecording(); return; }
+      dropStream();
+    }
     if (!ctx) { if (fromTap) { micBlocked(); } else { tapToAnswer(); } return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { micBlocked(); return; }
     navigator.mediaDevices.getUserMedia({ audio: true }).then(attach, micBlocked);
