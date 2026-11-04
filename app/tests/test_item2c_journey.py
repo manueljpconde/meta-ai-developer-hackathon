@@ -1,7 +1,7 @@
 """Smoke + full journey PT/EN with independent euro calc."""
 import unittest, tempfile, os, threading, time, urllib.request, urllib.parse, http.cookiejar, re
 from app import web, store
-from app.tests.helpers import csrf_token
+from app.tests.helpers import csrf_token, open_link
 
 class SmokeTest(unittest.TestCase):
     def test_app_server_over_http(self):
@@ -42,7 +42,7 @@ def do_journey(lang):
     # get link token from outbox if present else use helper tenant
     if mail.OUTBOX:
         token = mail.OUTBOX[0]['link'].split('token=')[1]
-        c.get('/auth/verify?token='+token)
+        open_link(c, token)
     else:
         # fallback: inject session directly (helpers path)
         import time as tm, secrets

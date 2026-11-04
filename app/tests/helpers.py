@@ -76,7 +76,7 @@ class Client:
         self.accept_language = None
         self.last_set_cookies = []
 
-    def request(self, method, path, params=None, accept_language=None):
+    def request(self, method, path, params=None, accept_language=None, body=None, content_type=None):
         if "?" in path:
             path_info, query = path.split("?", 1)
         else:
@@ -84,12 +84,14 @@ class Client:
         raw = b""
         if params is not None:
             raw = urllib.parse.urlencode(params).encode("utf-8")
+        if body is not None:
+            raw = body
         env = {
             "REQUEST_METHOD": method,
             "SCRIPT_NAME": "",
             "PATH_INFO": path_info,
             "QUERY_STRING": query,
-            "CONTENT_TYPE": "application/x-www-form-urlencoded",
+            "CONTENT_TYPE": content_type or "application/x-www-form-urlencoded",
             "CONTENT_LENGTH": str(len(raw)),
             "wsgi.input": io.BytesIO(raw),
             "wsgi.url_scheme": "http",
@@ -156,6 +158,13 @@ def hidden_inputs(body):
 
 def csrf_token(body):
     return hidden_inputs(body)["csrf_token"]
+
+
+def open_link(client, token):
+    """Open a sign-in link as a person does: the page, then its Sign in button (only the POST uses the link)."""
+    opened = client.get("/auth/verify?token=" + token)
+    fields = hidden_inputs(opened.body)
+    return client.post("/auth/verify", {"token": fields["token"], "csrf_token": fields["csrf_token"]})
 
 
 class AppTestCase(unittest.TestCase):

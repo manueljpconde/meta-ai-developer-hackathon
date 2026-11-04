@@ -198,6 +198,8 @@ fieldset label input[type="radio"] { width: auto; min-height: auto; display: inl
 
 /* Month cards as cards at every width (including phones) */
 .forecast-grid section {
+  min-width: 0;
+  overflow-x: auto;
   border: 1px solid #e6ebe8;
   padding: 0.75rem;
   background: #fff;
@@ -235,13 +237,126 @@ fieldset label input[type="radio"] { width: auto; min-height: auto; display: inl
 /* Desktop layout from 1024px */
 @media (min-width: 1024px) {
   body { max-width: 72rem; }
-  .forecast-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .forecast-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
   .forecast-grid section { margin-bottom: 0; }
+  .forecast-grid .deal-table { font-size: 0.85rem; }
+  .forecast-grid .deal-table th, .forecast-grid .deal-table td { padding: 0.3rem 0.25rem; }
   form.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; }
   form.two-col > div:has(> label) { grid-column: auto; }
   form.two-col fieldset { grid-column: auto; }
   form.two-col button[type="submit"] { grid-column: 1 / -1; }
 }
 @media (min-width: 1280px) {
-  .forecast-grid { grid-template-columns: repeat(3, 1fr); }
+  .forecast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+.voice-falar-fixed{position:fixed;bottom:1.5rem;right:1rem;width:56px;height:56px;min-height:56px;border-radius:50%;background:#16302c;color:#fff;border:none;font-size:1.6rem;line-height:1;z-index:40;padding:0;display:flex;align-items:center;justify-content:center}
+.voice-falar-header{font-size:0.85rem;width:auto;min-height:auto;height:32px;padding:0.2rem 0.5rem;background:transparent;color:#16302c;border:1px solid #e6ebe8}
+.voice-panel{position:fixed;bottom:0;left:0;right:0;height:50vh;background:#fff;border-top:1px solid #e6ebe8;overflow:auto;z-index:30;padding:0.75rem 0.75rem 6rem}
+.voice-panel[hidden],.voice-actions button[hidden],.voice-falar-fixed[hidden]{display:none !important}
+.voice-panel__inner{max-width:40rem;margin:0 auto}
+.voice-transcript{color:#5f6f6a;font-size:0.9rem;white-space:pre-line}
+.voice-question,.voice-readback{font-size:1.1rem;font-weight:600;margin:0.5rem 0}
+.voice-actions{display:flex;gap:0.5rem;margin:0.5rem 0}
+main{padding-bottom:5rem}
+@media(min-width:1024px){.voice-falar-fixed{display:none}.voice-falar-header{display:inline-flex}.voice-panel{left:50%;transform:translateX(-50%);max-width:40rem;width:100%;padding-bottom:0.75rem}main{padding-bottom:0}}
+
+/* Item 4f: icon, panel order, sheet on wide screens, header, forecast strip */
+.mic-icon{display:block;width:28px;height:28px;fill:currentColor;color:#fff}
+.voice-falar-header{display:inline-flex;align-items:center;gap:0.35rem;height:auto;min-height:36px;padding:0.2rem 0.6rem;background:#16302c;color:#fff;border:1px solid #16302c;margin-top:0}
+.voice-falar-header .mic-icon{width:24px;height:24px}
+.voice-working{color:#5f6f6a;font-size:0.9rem;min-height:1.2rem}
+.voice-diag{color:#5f6f6a;font-size:0.75rem;margin:0.25rem 0}
+.voice-diag:empty,.voice-working:empty{display:none}
+.voice-settings-first{font-size:1.1rem;font-weight:600;margin:0.5rem 0}
+.voice-settings-first[hidden]{display:none !important}
+#voiceTextForm[hidden]{display:none !important}
+.voice-panel button:disabled{opacity:0.6;cursor:default}
+.voice-panel .btn-primary,#voiceTextForm button[type="submit"]{background:#16302c;color:#fff;border:1px solid #16302c}
+.voice-panel .btn-secondary{background:transparent;color:#16302c;border:1px solid #16302c}
+.voice-actions{flex-direction:row;margin:0.5rem 0}
+.voice-actions button{margin-top:0.25rem}
+.voice-backdrop{display:none}
+.voice-backdrop[hidden]{display:none !important}
+
+/* Header: name, navigation, then PT | EN and sign-out together */
+header .header-tools{display:flex;align-items:center;gap:0.5rem;flex:0 0 auto;margin-left:auto}
+header .header-tools form{margin:0}
+/* Phones: the name and, on the same baseline, PT | EN with sign-out; the navigation on a line of its own */
+@media (max-width: 480px) {
+  header{display:grid;grid-template-columns:1fr auto;grid-template-areas:"brand tools" "nav nav";align-items:baseline;gap:0.25rem 0.5rem}
+  header .brand{grid-area:brand}
+  header .header-tools{grid-area:tools;flex-wrap:nowrap;align-items:baseline;margin-left:0}
+  header nav{grid-area:nav}
+}
+
+/* Forecast: the strip, the money lines and the deal name */
+.forecast-strip{display:grid;grid-template-columns:1fr;gap:0.5rem;margin:0.5rem 0 1rem}
+.forecast-strip--empty{display:block;color:#5f6f6a}
+.strip-item{display:flex;flex-direction:column;border:1px solid #e6ebe8;background:#fff;padding:0.75rem}
+.strip-label{color:#5f6f6a;font-size:0.85rem}
+.strip-value{font-size:1.4rem}
+.strip-note{color:#5f6f6a}
+.forecast-grid dt,.forecast-grid dd{white-space:nowrap;margin:0}
+.forecast-grid dd.money-breakdown{grid-column:1 / -1;padding-left:1.25rem;font-size:0.9rem;color:#5f6f6a;white-space:normal}
+.deal-table td:first-child a{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+
+@media (min-width: 1024px) {
+  .forecast-strip{grid-template-columns:repeat(3, 1fr)}
+  .forecast-grid{grid-template-columns:repeat(auto-fit, minmax(18rem, 1fr))}
+  .voice-backdrop{display:block;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(22,48,44,0.45);z-index:20}
+  .voice-panel{height:auto;max-height:70vh;overflow-y:auto;border-radius:16px 16px 0 0;box-shadow:0 -8px 32px rgba(0,0,0,0.25);max-width:640px}
+}
+
+/* Dashboard and expenses: the month cards' look (white, thin border), stage colours from the palette */
+.dashboard { margin-bottom: 1rem; }
+.dash-headline { border: 1px solid #e6ebe8; background: #fff; padding: 0.75rem; margin: 0 0 0.75rem; }
+.dash-confirmed { color: #16302c; font-weight: 600; }
+.dash-controls { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.5rem; margin: 0 0 0.75rem; min-width: 0; }
+.dash-range { flex: 1 1 auto; min-width: 0; text-align: center; }
+.dash-arrow { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; flex: 0 0 auto; border: 1px solid #e6ebe8; background: #fff; color: #16302c; text-decoration: none; }
+.dash-off { color: #5f6f6a; opacity: 0.4; }
+.dash-steps { display: inline-flex; flex: 0 0 auto; border: 1px solid #e6ebe8; background: #fff; }
+.dash-steps a { padding: 0.25rem 0.5rem; color: #16302c; text-decoration: none; font-size: 0.85rem; white-space: nowrap; }
+.dash-steps a[aria-current] { background: #16302c; color: #fff; }
+.dash-today { flex: 0 0 auto; color: #16302c; font-size: 0.9rem; }
+.dash-blocks { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+.dash-card { border: 1px solid #e6ebe8; background: #fff; padding: 0.75rem; margin-bottom: 0.75rem; min-width: 0; }
+.dash-blocks .dash-card { margin-bottom: 0; }
+.dash-card h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+.dash-row { display: grid; grid-template-columns: 5.25rem minmax(0, 1fr) auto; align-items: center; gap: 0.25rem 0.5rem; margin-bottom: 0.5rem; }
+.dash-month { font-weight: 700; white-space: nowrap; }
+.dash-bar { display: flex; height: 0.75rem; background: #f6f7f4; min-width: 0; }
+.dash-seg { display: block; height: 100%; }
+.dash-seg--confirmado { background: #16302c; }
+.dash-seg--provavel { background: #a7cec0; }
+.dash-seg--potencial { background: #f2b705; }
+.dash-amount { text-align: right; white-space: nowrap; }
+.dash-line { grid-column: 1 / -1; color: #5f6f6a; }
+.dash-legend { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.85rem; color: #5f6f6a; margin: 0.5rem 0 0; }
+.dash-legend i { display: inline-block; width: 0.75rem; height: 0.75rem; margin-right: 0.25rem; vertical-align: middle; }
+.w0{width:0%}.w1{width:5%}.w2{width:10%}.w3{width:15%}.w4{width:20%}.w5{width:25%}.w6{width:30%}.w7{width:35%}.w8{width:40%}.w9{width:45%}.w10{width:50%}.w11{width:55%}.w12{width:60%}.w13{width:65%}.w14{width:70%}.w15{width:75%}.w16{width:80%}.w17{width:85%}.w18{width:90%}.w19{width:95%}.w20{width:100%}
+.field-help { display: block; color: #5f6f6a; margin-top: 0.25rem; }
+.expense-list { list-style: none; padding: 0; margin: 0; }
+.expense-item { padding: 0.4rem 0; border-bottom: 1px solid #e6ebe8; overflow-wrap: anywhere; }
+.expense-total { margin: 0.5rem 0 0; }
+@media (min-width: 1024px) {
+  .dash-blocks { grid-template-columns: 2fr 3fr; }
+}
+/* Sign-in keeps a form-sized width on wide screens */
+.signin { max-width: 28rem; }
+/* Dashboard chart: inline SVG, text in ink, red only for a negative month (with its icon and label) */
+.dash-chart svg { display: block; width: 100%; max-width: 720px; height: auto; margin: 0 auto; }
+.dash-chart text { font-size: 13px; fill: #16302c; }
+.dash-chart .dash-chart-val { font-weight: 700; }
+.dash-chart .dash-chart-month, .dash-chart .dash-chart-today { fill: #5f6f6a; }
+.dash-chart .dash-chart-today { font-size: 11px; }
+.dash-chart .dash-chart-neg { font-weight: 700; fill: #9e2f25; }
+.dash-neg { color: #9e2f25; font-weight: 600; }
+.dash-seg--negative { background: #9e2f25; }
+@media (max-width: 600px) {
+  .dash-chart text { font-size: 22px; }
+  .dash-chart .dash-chart-today { font-size: 18px; }
+}
+/* One Falar button per width: the round fixed one below 1024px, the header one from 1024px */
+@media(max-width:1023px){.voice-falar-header{display:none}}

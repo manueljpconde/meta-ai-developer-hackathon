@@ -159,91 +159,126 @@ routes behind flags are still reachable code holding demo data
 writers, and the isolation tests must be able to assert no demo path
 exists.
 
-## T5. The update box: voice and typed input
+## T5. The panel, the script and speech
 
-Decision: one box on the main page with two inputs feeding one
-pipeline: a browser-recorded audio upload and a text field, both in
-either language (A7). No external scripts or assets: recording uses
-the browser's built-in recorder with a plain form upload; the 60 s
-cap (amendment (1)) is hinted in the page and enforced on the server
-by refusing audio over the cap with a message in the page language
-before any transcription call. Typed input stays fully available, so
-a missing microphone never blocks the update (D5).
+Decision: one "Falar" button on every signed-in page opens the panel;
+all behaviour lives in `app/static/voice.js`, served same-origin at
+`/static/voice.js` and loaded with a script tag (the content security
+policy is `default-src 'self'`, so there is no inline script and no
+external script or asset). The panel is in the page markup with the
+`hidden` attribute, so it is closed on load; the stylesheet only adds
+`display: none` for `[hidden]`, never for the opened panel. Every text
+in the panel (placeholder, Send, Cancel, Confirm, the connection and
+microphone messages) is rendered from `app/i18n.py` in the page
+language; the script holds no wording of its own and reads its messages
+from data attributes on the panel.
 
-Request size limits stay in the existing style (`MAX_BODY_BYTES`
-grown only as far as a 60 s compressed note needs, plus the text
-path unchanged), parsed with the standard library multipart handling;
-oversize or undecodable bodies are refused with an error and nothing
-stored changes. Audio is written to a temporary file scoped to the
-request and unlinked immediately after transcription succeeds or
-fails (T6); audio never lands in the database and never survives the
-request.
+The script talks to four endpoints with `format=json`: `/voice/extract`
+(typed or transcribed text), `/voice/confirm`, `/voice/cancel`, and
+`/voice/transcribe` (a raw `audio/wav` body, with the CSRF token and
+conversation id in the query string). Every answer is one JSON object
+with `state` (`ask`, `confirm`, `saved`, `cancelled`, `ended` or
+`error`), `question`, `readback`, `message`, `transcript`, `understood`,
+`conversation_id` and `lang`. The conversation id goes back with every
+turn, so each answer continues the same conversation; the page under
+the panel is not replaced, and reloads once, after a save, a cancel or
+a stop. Without the script the same endpoints answer a plain page with
+the same forms.
+
+Recording uses the Web Audio API in the browser: the microphone stream
+is downsampled to 16 kHz and encoded as a mono 16-bit PCM WAV in inline
+JavaScript of the script itself, because browsers record webm or mp4
+and the box has no ffmpeg. The server checks the WAV header (RIFF/WAVE,
+PCM, mono, 16 bit, 16000 Hz) and the 60 s cap before any model call and
+refuses anything else with the message in the page language; a body
+larger than a 60 s WAV is refused before it is read. Audio is held in
+memory for the request only: it is never written to a file or to the
+database.
+
+Speech output uses the browser's built-in `speechSynthesis`, with a
+voice in the language the agent spoke (the `lang` of the answer, not the
+page language). When no voice exists the questions stay on screen and
+the conversation continues by voice input; when the microphone is
+blocked or a browser will not restart it by itself, the panel shows one
+tap per answer ("Toca em Falar para responder.") and the typed path
+stays open.
 
 Options considered: (a) client-side duration check only; (b) server
-enforcement with a page hint. Chosen (b): client hints differ by
-browser and cannot be trusted for cost control; the server refusal is
-the testable guard, the hint is courtesy.
+enforcement. Chosen (b): client hints differ by browser and cannot be
+trusted for cost control. Options for the script: (a) inline in the
+page; (b) a served file. Chosen (b): the policy forbids inline script
+and a file can be tested and cached.
 
 ## T6. Transcription, extraction, the one question, confirmation
 
-Decision: extend the existing `engine/model_client.py` pattern, which
-already pins model `muse-spark-1.3`, standard library `urllib`,
-temperature 0, and key-from-environment. Two clients behind small
-interfaces so tests stub both: a transcription client sending the 60 s
-audio to `muse-voice-transcribe-1.0` and returning text, and an
-extraction client (a Muse model) turning text, typed or transcribed,
-into exactly one JSON object and nothing else: either a structured
-update for one of the five D4 kinds (named deal, explicit fields,
-nothing for what was not stated) or `{"question": "..."}` with one
-focused question. The enforcement ladder of T3 in the #18 design is
-kept: transport or HTTP failure raises `ModelError`; non-JSON,
-non-object, or empty answers raise; the planner maps exceptions to an
-error outcome, well-formed questions to the one-question flow, and
-validates the update shape before any engine call.
+Decision: extend the existing `engine/model_client.py` pattern (model
+`muse-spark-1.3`, standard library `urllib`, temperature 0, key from the
+environment). Two clients behind small interfaces so tests stub both.
 
-Ambiguity handling follows D5 strictly: one question at a time, each
-answer reinterpreted, the extracted fields always directly editable,
-and failure (transcription or model) rendered as an error with the
-typed and manual form path open, never as a guess. The confirmation
-card shows the editable extracted fields with the forecast before and
-after, both computed by `engine.calc` on the proposed values; Confirm
-saves through the normal deal-writing path with the existing
-idempotency keys, so double submission saves once. Before Confirm,
-nothing stored changes. The transcript and the confirmed change are
-stored with the deal's history; the audio file is already gone (T5).
+Transcription: `POST {META_API_BASE_URL or https://api.meta.ai/v1}/asr/transcribe`
+with `Authorization: Bearer <key>` and a `multipart/form-data` body of
+exactly two parts: `request` (`application/json`:
+`{"model": "muse-voice-transcribe-1.0", "audioEncoding": "WAV"}`) and
+`audio` (`audio/wav`, mono 16-bit PCM at 16 kHz). The answer is
+`{"sessionId", "transcript", "audioDurationMs", "turns": []}`.
+`/audio/transcriptions` does not exist (404), `audioEncoding` is
+required and `LINEAR16` with `sampleRateHertz` is refused, so neither is
+sent.
 
-The five D4 mappings resolve to the existing record model only: new
-deal through the guided order; CPCV date recorded on the deal with
-confirmed stage; escritura date set or moved as a full date; fell
-through moving the deal to Caidos; commission received recording the
-receipt with frozen figures. Model output never enters the money path
-(T8).
+Extraction: `POST /chat/completions` with model `muse-spark-1.3` and a
+timeout of at least 30 s (about 450 reasoning tokens for a short
+answer). The reply is parsed strictly as one JSON object with `intent`
+(`update` or `question`), `language` (`pt` or `en`), `kind` and the
+stated facts only; anything else is a `ModelError` and the typed path
+stays open. Small transcription errors in names are tolerated by deal
+matching, which compares the agent's own deals by words.
 
-Options considered: (a) save on send with undo; (b) confirm before
-saving. Chosen (b), unchanged from discovery D5: money records need
-an explicit human decision, and the before/after card is where the
-agent sees what an update earns. Options for extraction retries: (a)
-retry ambiguities silently; (b) one question to the agent. Chosen
-(b): retries spend budget hiding the ambiguity the agent must
-resolve.
+The conversation logic is `app/voice_flow.py`, plain app code: it
+normalises the stated facts, decides which required fields are still
+missing for the kind of update, matches the deal against the agent's own
+deals (no match, or several, means one question naming the candidates)
+and builds the one question and the one-line read-back. Required fields:
+new deal (name, commission excluding IVA, own percentage, escritura
+date, stage; CPCV date and agency only if spoken), CPCV signed (deal,
+date), escritura date (deal, date), fell through (deal), commission
+received (deal, amount, date), change stage (deal, stage), change
+commission or percentage (deal, the new value), reopen (deal). Nothing
+is saved before a spoken or tapped yes; the save goes through the normal
+deal-writing path with an idempotency key from the conversation, so a
+second confirm saves once. Conversations are kept in memory, tied to the
+tenant that started them, and expire after two hours. A commission
+received is stored in its own `receipts` table; `received` stays
+derived and no stage is marked by hand.
+
+After a read-back each answer is a correction. A field the agent names
+(by words such as share, commission, date) without a usable value, or
+with a negative one, is dropped and asked again (`app/voice_handlers.py`,
+`voice_flow.fields_named`); an answer that changes nothing asks "What
+should I correct?". `voice_flow.says_exact_date` makes what the agent
+said beat extraction's estimated flag.
+
+Options considered: (a) retry ambiguities silently; (b) one question to
+the agent. Chosen (b): retries spend budget hiding the ambiguity the
+agent must resolve.
 
 ## T7. The AI cost guard
 
 Decision: a per-tenant daily counter table (`tenant`, `day`, `count`)
 checked before any transcription or extraction call. At most 30
-updates per tenant per calendar day (Europe/Lisbon, same source as
-the current-month helper); the 31st and later attempts that day are
-refused with a clear message in the page language and no model call
-is made. Voice notes over 60 s are refused before transcription (T5)
-with the page-language message. Both refusals leave stored data
-untouched and keep the typed/manual path visible for non-AI work;
-they gate model spending, not record keeping. The day boundary uses
-the server date source already chosen for the forecast month.
+conversations per tenant per calendar day (Europe/Lisbon): a
+conversation counts once, when it starts, and the turns of a running
+conversation do not count again. Each conversation is also limited to 6
+questions; the stop shows what was understood and saves nothing. The
+31st conversation of a day is refused with a message in the page
+language and no model call, for typed text and for audio alike. WAV
+audio over 60 s, or with any other header than mono 16-bit PCM at
+16 kHz, is refused before transcription with the page-language message.
+Refusals leave stored data untouched and keep the typed and manual path
+visible; they gate model spending, not record keeping.
 
 Options considered: (a) per-session counters; (b) per-tenant daily
-counters. Chosen (b) per amendment (1): the cap is per tenant per
-day, a session counter resets the budget on every device, and the
-table survives restarts.
+counters. Chosen (b): a session counter resets the budget on every
+device, and the table survives restarts.
 
 ## T8. Money boundary and record semantics
 
@@ -272,6 +307,18 @@ Options considered: (a) keep a stored month column beside the
 escritura date; (b) derive the month from the date. Chosen (b) per
 answer A2: two fields holding the same fact disagree on stage, one
 field cannot.
+
+Estimated escritura date (Item 4): the deal stores an integer
+`escritura_estimada` flag next to the date, and nothing is saved without
+a date. A month given alone is stored as the 15th of that month with the
+flag set; an exact date clears it, whether it arrives by voice or on the
+deal form (the form has an \"Estimated date\" checkbox that the edit
+form shows as stored). What the agent says beats the extraction's
+`escritura_estimada` flag: a date said as exact or in full day, month
+and year is stored exact (flag 0) even if extraction returns true. The flag changes how a date is shown
+(\"(estimada)\" / \"(estimated)\" on cards, the table and the read-back,
+\"meados de março\" / \"mid-March\"), never which month the deal counts
+in: an estimated deal counts in its month's forecast like any other.
 
 ## T9. Language handling for the new flows
 

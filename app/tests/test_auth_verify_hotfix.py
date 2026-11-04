@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 
-from app.tests.helpers import Client
+from app.tests.helpers import Client, open_link
 from app import web
 
 
@@ -44,7 +44,7 @@ class ValidLinkEndToEndTest(unittest.TestCase):
         ok, token = auth.request_link(self.db_path, "alice@example.com", "1.1.1.1", lang="pt-PT")
         self.assertTrue(ok)
         # Verify navigates to / with session cookie
-        resp = self.client.get("/auth/verify?token=" + token)
+        resp = open_link(self.client, token)
         self.assertEqual(resp.code, 303, resp.body[:500])
         self.assertIn("/", resp.headers.get("location", ""))
         cookies = " ".join(self.client.last_set_cookies)
@@ -63,7 +63,7 @@ class ValidLinkEndToEndTest(unittest.TestCase):
         prev = os.environ.get("APP_BASE_URL")
         os.environ["APP_BASE_URL"] = "https://example.com"
         self.addCleanup(lambda: os.environ.pop("APP_BASE_URL", None) if prev is None else os.environ.__setitem__("APP_BASE_URL", prev))
-        resp = self.client.get("/auth/verify?token=" + token)
+        resp = open_link(self.client, token)
         self.assertEqual(resp.code, 303)
         cookies = " ".join(self.client.last_set_cookies)
         self.assertIn("Secure", cookies)
@@ -71,10 +71,51 @@ class ValidLinkEndToEndTest(unittest.TestCase):
         os.environ["APP_BASE_URL"] = "http://example.com"
         ok2, token2 = auth.request_link(self.db_path, "carol@example.com", "3.3.3.3", lang="pt-PT")
         self.assertTrue(ok2)
-        resp2 = self.client.get("/auth/verify?token=" + token2)
+        resp2 = open_link(self.client, token2)
         self.assertEqual(resp2.code, 303)
         cookies2 = " ".join(self.client.last_set_cookies)
         # last cookie from this request should not contain Secure (http)
         # extract last Set-Cookie header
         last = self.client.last_set_cookies[-1] if self.client.last_set_cookies else ""
         self.assertNotIn("Secure", last)
+
+
+class OpeningALinkChangesNothingTest(unittest.TestCase):
+    """iPhone 2026-11-04: the mail app fetched every link first, so the agent's tap found it used."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db_path = tmp.name + "/test.db"
+        web.DB_PATH = self.db_path
+        from app import auth
+        ok, self.token = auth.request_link(self.db_path, "iphone@example.com", "9.9.9.9", lang="pt-PT")
+        self.assertTrue(ok)
+
+    def test_a_preview_fetch_then_the_agents_tap_signs_in(self):
+        preview = Client()
+        for _ in range(3):
+            self.assertEqual(preview.get("/auth/verify?token=" + self.token).code, 200)
+        self.assertNotIn("session=", " ".join(preview.last_set_cookies).replace("session=;", ""))
+        agent = Client()
+        response = open_link(agent, self.token)
+        self.assertEqual(response.code, 303)
+        self.assertEqual(agent.get("/").code, 200)
+
+    def test_the_page_shows_a_sign_in_button_that_posts(self):
+        body = Client().get("/auth/verify?token=" + self.token).body
+        self.assertIn('<form method="post" action="/auth/verify">', body)
+        self.assertIn("Entrar", body)
+
+    def test_a_post_without_the_page_token_uses_nothing(self):
+        client = Client()
+        client.get("/auth/verify?token=" + self.token)
+        refused = client.post("/auth/verify", {"token": self.token, "csrf_token": "wrong"})
+        self.assertEqual(refused.code, 200)
+        self.assertEqual(open_link(Client(), self.token).code, 303, "the link is still unused")
+
+    def test_a_used_link_says_so_when_opened(self):
+        open_link(Client(), self.token)
+        again = Client().get("/auth/verify?token=" + self.token)
+        self.assertIn('data-i18n="auth_invalid"', again.body)
+        self.assertNotIn('action="/auth/verify"', again.body)

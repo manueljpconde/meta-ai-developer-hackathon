@@ -3,7 +3,7 @@
 import unittest
 from unittest import mock
 
-from app.tests.helpers import AppTestCase, csrf_token
+from app.tests.helpers import AppTestCase, csrf_token, open_link
 
 
 class SigninPageTest(AppTestCase):
@@ -39,7 +39,7 @@ class SigninPageTest(AppTestCase):
         body = self.client.get("/signin").body
         self.client.post("/signin", {"email": "u@v.com", "csrf_token": csrf_token(body)})
         token = mail.OUTBOX[0]["link"].split("token=")[1]
-        resp = self.client.get("/auth/verify?token=" + token)
+        resp = open_link(self.client, token)
         self.assertEqual(resp.code, 303, resp.body[:500])
         # Should set session cookie with HttpOnly and Lax
         cookies = " ".join(self.client.last_set_cookies).lower()
@@ -92,7 +92,7 @@ class SigninPageTest(AppTestCase):
         body = self.client.get("/signin").body
         self.client.post("/signin", {"email": "s@b.com", "csrf_token": csrf_token(body)})
         token = mail.OUTBOX[0]["link"].split("token=")[1]
-        self.client.get("/auth/verify?token=" + token)
+        open_link(self.client, token)
         self.assertIn("session", self.client.cookies)
         body2 = self.client.get("/").body
         resp = self.client.post("/signout", {"csrf_token": csrf_token(body2)})
@@ -112,7 +112,7 @@ class SigninPageTest(AppTestCase):
         body = self.client.get("/signin").body
         self.client.post("/signin", {"email": "l@b.com", "csrf_token": csrf_token(body)})
         token = mail.OUTBOX[0]["link"].split("token=")[1]
-        self.client.get("/auth/verify?token=" + token)
+        open_link(self.client, token)
         cookies = " ".join(self.client.last_set_cookies).lower()
         self.assertIn("httponly", cookies)
         self.assertIn("samesite=lax", cookies)
@@ -124,7 +124,7 @@ class SigninPageTest(AppTestCase):
         body = self.client.get("/signin").body
         self.client.post("/signin", {"email": "del@b.com", "csrf_token": csrf_token(body)})
         token = mail.OUTBOX[0]["link"].split("token=")[1]
-        self.client.get("/auth/verify?token=" + token)
+        open_link(self.client, token)
         # Try delete with wrong email
         body2 = self.client.get("/account/delete").body
         resp = self.client.post("/account/delete", {"email": "wrong@b.com", "csrf_token": csrf_token(body2)})
