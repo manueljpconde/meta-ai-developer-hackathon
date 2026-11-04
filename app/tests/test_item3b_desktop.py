@@ -40,9 +40,9 @@ class MonthCardsFillRowTest(AppTestCase):
         self.assertIn("72rem", css)
         self.assertIn("forecast-grid", css)
         # two per row at 1024
-        self.assertIn("repeat(2, 1fr)", css)
+        self.assertIn("repeat(2, minmax(0, 1fr))", css)
         # three per row at larger breakpoint (1280)
-        self.assertIn("repeat(3, 1fr)", css)
+        self.assertIn("repeat(3, minmax(0, 1fr))", css)
         # grid inside cards not wrapped into narrow column
         self.assertIn("grid-template-columns: auto 1fr", css)
     def test_forecast_markup_uses_grid_and_sections(self):

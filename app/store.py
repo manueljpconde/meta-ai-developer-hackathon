@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS receipts (
     created_at REAL NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE
 );
+CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    deal_id INTEGER REFERENCES deals(id) ON DELETE SET NULL,
+    description TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+    expense_date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('paid', 'planned')),
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS expenses_tenant_date ON expenses (tenant_id, expense_date);
 CREATE TABLE IF NOT EXISTS voice_limits (
     tenant_id INTEGER NOT NULL,
     day TEXT NOT NULL,
@@ -487,6 +498,7 @@ def delete_deal(path, deal_id, tenant_id):
     conn = _connect(path)
     try:
         conn.execute("DELETE FROM receipts WHERE deal_id = ? AND tenant_id = ?", (deal_id, tenant_id))
+        conn.execute("UPDATE expenses SET deal_id = NULL WHERE deal_id = ? AND tenant_id = ?", (deal_id, tenant_id))
         cur = conn.execute("DELETE FROM deals WHERE id = ? AND tenant_id = ?", (deal_id, tenant_id))
         conn.commit()
         return cur.rowcount > 0
@@ -561,6 +573,7 @@ def delete_tenant(path, tenant_id):
         row = conn.execute("SELECT email FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
         email = row[0] if row else None
         conn.execute("DELETE FROM receipts WHERE tenant_id = ?", (tenant_id,))
+        conn.execute("DELETE FROM expenses WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM voice_conversations WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM voice_limits WHERE tenant_id = ?", (tenant_id,))
         conn.execute("DELETE FROM deals WHERE tenant_id = ?", (tenant_id,))
@@ -805,6 +818,120 @@ def list_receipts(path, tenant_id, deal_id=None):
     finally:
         conn.close()
     return [{"id": r[0], "deal_id": r[1], "amount_cents": r[2], "received_date": r[3]} for r in rows]
+
+
+EXPENSE_STATUSES = ("paid", "planned")
+EXPENSE_KEYS = ("id", "deal_id", "description", "amount_cents", "expense_date", "status")
+
+
+def _check_expense(conn, tenant_id, fields):
+    """Refuse an expense whose values are out of range or whose deal is another tenant's."""
+    amount = fields["amount_cents"]
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+        raise ValueError("amount must be positive integer cents")
+    if fields["status"] not in EXPENSE_STATUSES:
+        raise ValueError("unknown expense status")
+    if not fields["description"].strip() or not fields["expense_date"]:
+        raise ValueError("description and date are required")
+    if fields.get("deal_id") is not None:
+        owned = conn.execute("SELECT 1 FROM deals WHERE id = ? AND tenant_id = ?",
+                             (fields["deal_id"], tenant_id)).fetchone()
+        if owned is None:
+            raise ValueError("deal not found for tenant")
+
+
+def insert_expense(path, tenant_id, fields, now=None):
+    """Record one expense of the tenant; returns its id."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_expense(conn, tenant_id, fields)
+        cur = conn.execute(
+            "INSERT INTO expenses (tenant_id, deal_id, description, amount_cents, expense_date, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (tenant_id, fields.get("deal_id"), fields["description"].strip(), fields["amount_cents"],
+             fields["expense_date"], fields["status"], now if now is not None else time.time()))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def update_expense(path, tenant_id, expense_id, fields):
+    """Change one expense of the tenant; False when it is not the tenant's."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_expense(conn, tenant_id, fields)
+        cur = conn.execute(
+            "UPDATE expenses SET deal_id=?, description=?, amount_cents=?, expense_date=?, status=?"
+            " WHERE id=? AND tenant_id=?",
+            (fields.get("deal_id"), fields["description"].strip(), fields["amount_cents"],
+             fields["expense_date"], fields["status"], expense_id, tenant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_expense(path, tenant_id, expense_id):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        cur = conn.execute("DELETE FROM expenses WHERE id = ? AND tenant_id = ?", (expense_id, tenant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_expense(path, tenant_id, expense_id):
+    init_db(path)
+    conn = _connect(path)
+    try:
+        row = conn.execute(
+            "SELECT id, deal_id, description, amount_cents, expense_date, status"
+            " FROM expenses WHERE id = ? AND tenant_id = ?", (expense_id, tenant_id)).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(EXPENSE_KEYS, row)) if row else None
+
+
+def list_expenses(path, tenant_id, month=None, deal_id=None):
+    """The tenant's expenses by date, optionally of one ``YYYY-MM`` month or one deal."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        sql = ("SELECT id, deal_id, description, amount_cents, expense_date, status"
+               " FROM expenses WHERE tenant_id = ?")
+        args = [tenant_id]
+        if month is not None:
+            sql += " AND substr(expense_date, 1, 7) = ?"
+            args.append(month)
+        if deal_id is not None:
+            sql += " AND deal_id = ?"
+            args.append(deal_id)
+        rows = conn.execute(sql + " ORDER BY expense_date, id", args).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(EXPENSE_KEYS, r)) for r in rows]
+
+
+def expense_totals(path, tenant_id):
+    """{"YYYY-MM": (all recorded cents, planned cents)} for the tenant's expenses."""
+    init_db(path)
+    conn = _connect(path)
+    try:
+        rows = conn.execute(
+            "SELECT substr(expense_date, 1, 7), SUM(amount_cents),"
+            " SUM(CASE WHEN status = 'planned' THEN amount_cents ELSE 0 END)"
+            " FROM expenses WHERE tenant_id = ? GROUP BY substr(expense_date, 1, 7)",
+            (tenant_id,)).fetchall()
+    finally:
+        conn.close()
+    return {month: (recorded, planned) for month, recorded, planned in rows}
 
 
 def check_voice_limit(path, tenant_id, now=None):

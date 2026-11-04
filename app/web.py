@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, quote, unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app import auth, i18n, mail, store, voice_audio
-from engine.calc import agent_share, calc_month
+from engine.calc import agent_share, calc_month, month_expenses
 
 DB_PATH = os.environ.get("APP_DB_PATH", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "agentimo.db"))
@@ -262,6 +262,19 @@ def single_figures(part_base, settings, expenses_cents):
     )
 
 
+def expense_rule(tenant_id):
+    """month -> (expense cents, estimated) by item 6's rule, for one tenant."""
+    settings = store.get_settings(DB_PATH, tenant_id=tenant_id)
+    estimate = settings["expenses_cents"] if settings else 0
+    totals = store.expense_totals(DB_PATH, tenant_id)
+    current = nl_today()[:7]
+
+    def rule(month):
+        recorded, planned = totals.get(month, (0, 0))
+        return month_expenses(month, current, estimate, recorded, planned)
+    return rule
+
+
 def read_form(environ):
     """Read form fields, refusing oversized or non-UTF-8 bodies.
 
@@ -362,6 +375,8 @@ APP_ROUTES = [
     ("/deals/delete", "GET"), ("/deals/delete", "POST"),
     ("/voice/transcribe", "POST"),
     ("/voice/extract", "POST"), ("/voice/confirm", "POST"), ("/voice/cancel", "POST"),
+    ("/expenses", "GET"), ("/expenses/add", "POST"),
+    ("/expenses/edit", "GET"), ("/expenses/update", "POST"), ("/expenses/delete", "POST"),
     ("/language", "POST"),
 ]
 
@@ -394,7 +409,7 @@ def nav(lang, current=""):
     """The header navigation, marking the current page when known."""
     links = []
     for href, key in (("/", "nav_home"), ("/deals/new", "nav_new"),
-                      ("/settings", "nav_settings")):
+                      ("/expenses", "nav_expenses"), ("/settings", "nav_settings")):
         mark = ' aria-current="page"' if href == current else ""
         links.append('<a href="%s" data-i18n="%s"%s>%s</a>'
                      % (href, key, mark, esc(i18n.text(lang, key))))
@@ -560,6 +575,14 @@ def settings_form(lang, csrf, values, errors):
                name, name, esc(values.get(name, "")),
                error_span(errors.get(name, "")))
         )
+
+    def expenses_field():
+        zero = values.get("expenses", "").strip() in ("0", "0,00", "0.00", "0,0", "0.0")
+        warning = ('<p class="notice" data-i18n="set_expenses_zero">%s</p>'
+                   % esc(i18n.text(lang, "set_expenses_zero")) if zero else "")
+        return field("expenses", "set_expenses").replace(
+            "</div>", '<small class="field-help" data-i18n="set_expenses_help">%s</small>%s</div>'
+            % (esc(i18n.text(lang, "set_expenses_help")), warning), 1)
     return (
         '<h1 data-i18n="set_title">%s</h1>'
         '<form method="post" action="/settings">'
@@ -572,7 +595,7 @@ def settings_form(lang, csrf, values, errors):
             esc(i18n.text(lang, "set_title")), esc(csrf), esc(lang),
             field("share", "set_share"), field("iva", "set_iva"),
             field("retencao", "set_retencao"), field("irs", "set_irs"),
-            field("ss", "set_ss"), field("expenses", "set_expenses"),
+            field("ss", "set_ss"), expenses_field(),
             esc(i18n.text(lang, "set_save")),
         )
     )
@@ -709,7 +732,7 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
     )
 
 
-def forecast_section(lang, month, deals, expenses_cents):
+def forecast_section(lang, month, deals, expenses_cents, estimated=False):
     result = month_figures(
         [
             {
@@ -755,6 +778,7 @@ def forecast_section(lang, month, deals, expenses_cents):
     cards = "".join(_card(d) for d in deals)
     cards_html = '<div class="deal-cards">%s</div>' % cards
     breakdown = result["protected_breakdown"]
+    expense_key = "m_expenses_est" if estimated else "m_expenses"
     return (
         "<section><h2>%s</h2>"
         "<dl>"
@@ -762,6 +786,7 @@ def forecast_section(lang, month, deals, expenses_cents):
         '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_set_aside">%s</dt><dd>%s</dd>'
         '<dd class="money-breakdown">%s %s \u00b7 %s %s \u00b7 %s %s</dd>'
+        '<dt data-i18n="%s">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
         "</dl>"
         '<h3 data-i18n="m_deals">%s</h3><table class="deal-table"><thead><tr><th data-i18n="th_name">%s</th><th data-i18n="th_stage">%s</th><th data-i18n="th_amount">%s</th><th data-i18n="th_escritura">%s</th><th data-i18n="th_cpcv">%s</th></tr></thead><tbody>%s</tbody></table>%s</section>'
@@ -779,6 +804,8 @@ def forecast_section(lang, month, deals, expenses_cents):
             esc(format_amount(breakdown["irs_reserve"], lang)),
             esc(i18n.text(lang, "b_ss")),
             esc(format_amount(breakdown["ss_reserve"], lang)),
+            expense_key, esc(i18n.text(lang, expense_key)),
+            esc(format_amount(expenses_cents, lang)),
             esc(i18n.text(lang, "m_really")),
             esc(format_amount(result["really_available"], lang)),
             esc(i18n.text(lang, "m_deals")),
@@ -790,19 +817,18 @@ def forecast_section(lang, month, deals, expenses_cents):
 
 def _month_really_and_set_aside(deals, expenses_cents):
     """(really yours, money to set aside) of one month's deals, as its card shows them."""
-    if not deals:
-        return 0, 0
     result = month_figures(deals, expenses_cents)
     return result["really_available"], result["protected_money"]
 
 
-def forecast_strip_figures(active_deals, expenses_cents, today):
+def forecast_strip_figures(active_deals, expenses_for, today):
     """The three figures of the forecast strip, from the same engine.calc results the cards use.
 
     The window is the month of ``today`` and the next two. A total is the sum of
     the matching card lines. The estimated share of a total is what the deals with
     an estimated escritura date contribute to it, each taken from engine.calc on
     its own (bank inflow less the money to set aside; expenses belong to no deal).
+    ``expenses_for(month)`` gives each month's expense cents.
     """
     start = today[:7]
     window = [add_months(start, i) for i in range(3)]
@@ -814,7 +840,7 @@ def forecast_strip_figures(active_deals, expenses_cents, today):
         really = aside = 0
         for month in window:
             r, a = _month_really_and_set_aside(
-                [d for d in deals if derive_month(d.get("escritura_date", "")) == month], expenses_cents)
+                [d for d in deals if derive_month(d.get("escritura_date", "")) == month], expenses_for(month))
             really += r
             aside += a
         return really, aside
@@ -832,14 +858,14 @@ def forecast_strip_figures(active_deals, expenses_cents, today):
     if future:
         deal = future[0]
         nxt = {"date": deal["escritura_date"], "estimated": bool(deal.get("escritura_estimada")),
-               "amount": month_figures([deal], expenses_cents)["bank_inflow"]}
+               "amount": month_figures([deal], 0)["bank_inflow"]}
     return {"really": really, "really_estimated": est_really,
             "aside": aside, "aside_estimated": est_aside, "next": nxt}
 
 
-def forecast_strip(lang, active_deals, expenses_cents):
+def forecast_strip(lang, active_deals, expenses_for):
     """The strip above the month cards: three figures, or one line when nothing falls in the window."""
-    figures = forecast_strip_figures(active_deals, expenses_cents, nl_today())
+    figures = forecast_strip_figures(active_deals, expenses_for, nl_today())
     if figures is None:
         return '<p class="forecast-strip forecast-strip--empty" data-i18n="strip_none">%s</p>' % esc(i18n.text(lang, "strip_none"))
 
@@ -868,6 +894,254 @@ def forecast_strip(lang, active_deals, expenses_cents):
         item("strip_yours", format_amount(figures["really"], lang), estimated_note(figures["really_estimated"]), "strip-yours"),
         item("strip_next", next_value, next_note, "strip-next"),
         item("strip_aside", format_amount(figures["aside"], lang), estimated_note(figures["aside_estimated"]), "strip-aside")))
+
+
+DASH_LIMIT = 12
+
+
+def short_month(year_month, lang):
+    names = PT_MONTHS if lang == "pt-PT" else EN_MONTHS
+    return "%s %s" % (names[int(year_month[5:7]) - 1][:3], year_month[:4])
+
+
+def dashboard_window(query):
+    """(offset in months, step) from the query string; anything invalid gives the default."""
+    try:
+        step = int(query.get("step", "1"))
+    except ValueError:
+        step = 1
+    if step not in (1, 2):
+        step = 1
+    try:
+        offset = int(query.get("w", "0"))
+    except ValueError:
+        offset = 0
+    return max(-DASH_LIMIT, min(DASH_LIMIT, offset)), step
+
+
+def dashboard_months(current, offset):
+    """(the 3 Recebido months, the 3 Previsto months) of the window shifted by offset."""
+    start = add_months(current, offset)
+    return [add_months(start, i) for i in (-3, -2, -1)], [add_months(start, i) for i in (0, 1, 2)]
+
+
+def dashboard_month(month, deals, rule):
+    """One dashboard row from engine.calc: each stage before expenses, the month's expenses once."""
+    in_month = [d for d in deals if derive_month(d.get("escritura_date", "")) == month]
+    expenses, estimated = rule(month)
+    total = month_figures(in_month, expenses)
+    stages = {code: month_figures([d for d in in_month if d["stage"] == code], 0)["really_available"]
+              for code in STAGES}
+    return {"month": month, "bank": total["bank_inflow"], "aside": total["protected_money"],
+            "expenses": expenses, "estimated": estimated, "really": total["really_available"],
+            "stages": stages,
+            "estimated_dates": sum(1 for d in in_month if d.get("escritura_estimada"))}
+
+
+def _width(value, top):
+    """A bar width class in twentieths of the largest bar."""
+    if top <= 0 or value <= 0:
+        return "w0"
+    return "w%d" % max(1, min(20, round(value * 20 / top)))
+
+
+def dashboard(lang, deals, rule, offset, step):
+    """Headline, timeline controls, Recebido and Previsto, all from the same engine.calc rows."""
+    past, future = dashboard_months(nl_today()[:7], offset)
+    received = [dashboard_month(m, deals, rule) for m in past]
+    expected = [dashboard_month(m, deals, rule) for m in future]
+    top = max([r["bank"] for r in received]
+              + [sum(max(v, 0) for v in r["stages"].values()) for r in expected] + [0])
+    money = lambda cents: esc(format_amount(cents, lang))
+    label = (i18n.text(lang, "dash_next3") if offset == 0
+             else "%s – %s" % (short_month(future[0], lang), short_month(future[-1], lang)))
+    headline = esc(i18n.text(lang, "dash_headline")) % {
+        "label": esc(label),
+        "really": "<b>%s</b>" % money(sum(r["really"] for r in expected)),
+        "confirmed": '<span class="dash-confirmed">%s</span>' % money(
+            sum(r["stages"]["confirmado"] for r in expected)),
+    }
+
+    def link(target, key, text, css):
+        if target is None:
+            return '<span class="%s" aria-disabled="true" title="%s">%s</span>' % (
+                css + " dash-off", esc(i18n.text(lang, key)), text)
+        return '<a class="%s" href="/?w=%d&amp;step=%d" title="%s" aria-label="%s">%s</a>' % (
+            css, target, step, esc(i18n.text(lang, key)), esc(i18n.text(lang, key)), text)
+
+    prev_target = max(-DASH_LIMIT, offset - step) if offset > -DASH_LIMIT else None
+    next_target = min(DASH_LIMIT, offset + step) if offset < DASH_LIMIT else None
+    steps = "".join(
+        '<a href="/?w=%d&amp;step=%d" data-i18n="%s"%s>%s</a>' % (
+            offset, n, key, ' aria-current="true"' if n == step else "", esc(i18n.text(lang, key)))
+        for n, key in ((1, "dash_step1"), (2, "dash_step2")))
+    controls = (
+        '<nav class="dash-controls">%s<strong class="dash-range">%s – %s</strong>%s'
+        '<span class="dash-steps">%s</span><a class="dash-today" href="/" data-i18n="dash_today">%s</a></nav>'
+        % (link(prev_target, "dash_prev", "◀", "dash-arrow"),
+           esc(short_month(past[0], lang)), esc(short_month(future[-1], lang)),
+           link(next_target, "dash_next", "▶", "dash-arrow"),
+           steps, esc(i18n.text(lang, "dash_today"))))
+
+    def exp_label(row):
+        return esc(i18n.text(lang, "dash_exp_est" if row["estimated"] else "dash_exp"))
+
+    def received_row(row):
+        line = esc(i18n.text(lang, "dash_line_past")) % {
+            "exp_label": exp_label(row), "exp": money(row["expenses"]), "really": money(row["really"])}
+        return ('<div class="dash-row"><span class="dash-month">%s</span>'
+                '<span class="dash-bar"><span class="dash-seg dash-seg--confirmado %s"></span></span>'
+                '<b class="dash-amount">%s</b><small class="dash-line">%s</small></div>'
+                % (esc(short_month(row["month"], lang)), _width(row["bank"], top), money(row["bank"]), line))
+
+    def expected_row(row):
+        segments = "".join('<span class="dash-seg dash-seg--%s %s"></span>' % (code, _width(row["stages"][code], top))
+                           for code in ("confirmado", "provavel", "potencial"))
+        line = esc(i18n.text(lang, "dash_line_future")) % {
+            "bank": money(row["bank"]), "aside": money(row["aside"]),
+            "exp_label": exp_label(row), "exp": money(row["expenses"])}
+        if row["estimated_dates"]:
+            line += ' <em>%s</em>' % esc(i18n.text(lang, "dash_estimated_n") % row["estimated_dates"])
+        return ('<div class="dash-row"><span class="dash-month">%s</span><span class="dash-bar">%s</span>'
+                '<b class="dash-amount">%s</b><small class="dash-line">%s</small></div>'
+                % (esc(short_month(row["month"], lang)), segments, money(row["really"]), line))
+
+    legend = "".join('<span><i class="dash-seg--%s"></i>%s</span>' % (code, esc(i18n.text(lang, "st_" + code)))
+                     for code in ("confirmado", "provavel", "potencial"))
+    return (
+        '<div class="dashboard"><p class="dash-headline">%s</p>%s<div class="dash-blocks">'
+        '<section class="dash-card dash-received"><h2 data-i18n="dash_received">%s</h2>%s</section>'
+        '<section class="dash-card dash-expected"><h2 data-i18n="dash_expected">%s</h2>%s'
+        '<p class="dash-legend">%s</p></section></div></div>'
+        % (headline, controls, esc(i18n.text(lang, "dash_received")), "".join(map(received_row, received)),
+           esc(i18n.text(lang, "dash_expected")), "".join(map(expected_row, expected)), legend))
+
+
+def validate_expense(lang, fields, deal_ids):
+    """(errors, parsed) for the expense form; amounts by the form's locale, any valid date."""
+    errors, parsed = {}, {}
+    locale = fields.get("form_locale", lang)
+    if locale not in i18n.SUPPORTED:
+        locale = lang
+    description = fields.get("description", "").strip()
+    if not description:
+        errors["description"] = i18n.text(lang, "err_description")
+    parsed["description"] = description[:200]
+    try:
+        amount = parse_amount(fields.get("amount", ""), locale)
+        if amount <= 0:
+            errors["amount"] = i18n.text(lang, "err_positive")
+        parsed["amount_cents"] = amount
+    except ValueError:
+        errors["amount"] = i18n.text(lang, "err_amount")
+    date = fields.get("expense_date", "")
+    if not date:
+        y, m, d = (fields.get("expense_date_" + part, "").strip() for part in ("year", "month", "day"))
+        date = "%s-%s-%s" % (y, m, d) if y and m and d else ""
+    if not valid_date(date):
+        errors["expense_date"] = i18n.text(lang, "err_date")
+    parsed["expense_date"] = date
+    status = fields.get("status", "")
+    if status not in store.EXPENSE_STATUSES:
+        status = "paid"
+    parsed["status"] = status
+    raw_deal = fields.get("deal_id", "").strip()
+    parsed["deal_id"] = None
+    if raw_deal:
+        try:
+            deal_id = int(raw_deal)
+        except ValueError:
+            deal_id = None
+        if deal_id not in deal_ids:
+            errors["deal_id"] = i18n.text(lang, "err_amount")
+        parsed["deal_id"] = deal_id
+    return errors, parsed
+
+
+def expense_form(lang, csrf, action, values, errors, deals, submit_key):
+    def text_field(name, key):
+        return ('<div><label for="exp-%s" data-i18n="%s">%s</label><input id="exp-%s" name="%s" value="%s">%s</div>'
+                % (name, key, esc(i18n.text(lang, key)), name, name, esc(values.get(name, "")),
+                   error_span(errors.get(name, ""))))
+    status = values.get("status", "paid")
+    statuses = "".join('<label><input type="radio" name="status" value="%s"%s>%s</label>' % (
+        code, " checked" if status == code else "", esc(i18n.text(lang, key)))
+        for code, key in (("paid", "exp_paid"), ("planned", "exp_planned")))
+    chosen = str(values.get("deal_id") or "")
+    options = '<option value="">%s</option>' % esc(i18n.text(lang, "exp_no_deal")) + "".join(
+        '<option value="%d"%s>%s</option>' % (d["id"], " selected" if str(d["id"]) == chosen else "", esc(d["name"]))
+        for d in deals)
+    return (
+        '<form method="post" action="%s" class="two-col">'
+        '<input type="hidden" name="csrf_token" value="%s">'
+        '<input type="hidden" name="form_locale" value="%s">'
+        '%s%s'
+        '<fieldset><legend data-i18n="exp_date">%s</legend>%s%s</fieldset>'
+        '<fieldset><legend data-i18n="exp_status">%s</legend>%s</fieldset>'
+        '<div><label for="exp-deal" data-i18n="exp_deal">%s</label><select id="exp-deal" name="deal_id">%s</select>%s</div>'
+        '<button type="submit" data-i18n="%s">%s</button></form>'
+        % (action, esc(csrf), esc(lang),
+           text_field("description", "exp_description"), text_field("amount", "exp_amount"),
+           esc(i18n.text(lang, "exp_date")), date_selects(lang, "expense_date", values.get("expense_date", "")),
+           error_span(errors.get("expense_date", "")),
+           esc(i18n.text(lang, "exp_status")), statuses,
+           esc(i18n.text(lang, "exp_deal")), options, error_span(errors.get("deal_id", "")),
+           submit_key, esc(i18n.text(lang, submit_key))))
+
+
+def expense_items(lang, items, deals):
+    names = {d["id"]: d["name"] for d in deals}
+    rows = "".join(
+        '<li class="expense-item"><a href="/expenses/edit?id=%d">%s</a> · %s · <b>%s</b> · %s%s</li>'
+        % (e["id"], esc(e["description"]), esc(format_date(e["expense_date"], lang)),
+           esc(format_amount(e["amount_cents"], lang)),
+           esc(i18n.text(lang, "exp_paid" if e["status"] == "paid" else "exp_planned")),
+           (" · " + esc(names[e["deal_id"]])) if e["deal_id"] in names else "")
+        for e in items)
+    return '<ul class="expense-list">%s</ul>' % rows
+
+
+def expenses_page(lang, csrf, month, items, deals, values, errors):
+    current = nl_today()[:7]
+    month_nav = (
+        '<nav class="dash-controls">'
+        '<a class="dash-arrow" href="/expenses?month=%s" title="%s" aria-label="%s">◀</a>'
+        '<strong class="dash-range">%s</strong>'
+        '<a class="dash-arrow" href="/expenses?month=%s" title="%s" aria-label="%s">▶</a>'
+        '<a class="dash-today" href="/expenses" data-i18n="exp_today">%s</a></nav>'
+        % (add_months(month, -1), esc(i18n.text(lang, "exp_prev")), esc(i18n.text(lang, "exp_prev")),
+           esc(format_month(month, lang)),
+           add_months(month, 1), esc(i18n.text(lang, "exp_next")), esc(i18n.text(lang, "exp_next")),
+           esc(i18n.text(lang, "exp_today"))))
+    if items:
+        listing = expense_items(lang, items, deals) + '<p class="expense-total"><span data-i18n="exp_total">%s</span>: <b>%s</b></p>' % (
+            esc(i18n.text(lang, "exp_total")), esc(format_amount(sum(e["amount_cents"] for e in items), lang)))
+    else:
+        listing = '<p data-i18n="exp_none">%s</p>' % esc(i18n.text(lang, "exp_none"))
+    if "expense_date" not in values:
+        values = dict(values, expense_date=nl_today() if month == current else month + "-01")
+    return (
+        '<h1 data-i18n="exp_title">%s</h1>%s<section class="dash-card">%s</section>'
+        '<h2 data-i18n="exp_add">%s</h2>%s'
+        % (esc(i18n.text(lang, "exp_title")), month_nav, listing, esc(i18n.text(lang, "exp_add")),
+           expense_form(lang, csrf, "/expenses/add", values, errors, deals, "exp_add")))
+
+
+def expense_edit_page(lang, csrf, expense_id, values, errors, deals):
+    return (
+        '<h1 data-i18n="exp_edit">%s</h1>%s'
+        '<form method="post" action="/expenses/delete?id=%d"><input type="hidden" name="csrf_token" value="%s">'
+        '<button type="submit" class="btn-secondary" data-i18n="exp_delete">%s</button></form>'
+        % (esc(i18n.text(lang, "exp_edit")),
+           expense_form(lang, csrf, "/expenses/update?id=%d" % expense_id, values, errors, deals, "exp_save"),
+           expense_id, esc(csrf), esc(i18n.text(lang, "exp_delete"))))
+
+
+def deal_expenses_section(lang, items):
+    body = expense_items(lang, items, []) if items else '<p data-i18n="exp_deal_none">%s</p>' % esc(
+        i18n.text(lang, "exp_deal_none"))
+    return '<section class="dash-card deal-expenses"><h2 data-i18n="exp_deal_title">%s</h2>%s</section>' % (
+        esc(i18n.text(lang, "exp_deal_title")), body)
 
 
 def edit_form_html(lang, csrf, deal_id, values, errors):
@@ -1354,8 +1628,8 @@ def application(environ, start_response):
     if path == "/" and method == "GET":
         query = read_query(environ)
         only = query.get("month", "")
-        settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
-        expenses = settings["expenses_cents"] if settings else 0
+        rule = expense_rule(session["tenant_id"])
+        offset, step = dashboard_window(query)
         if only and valid_month(only):
             months = [only]
         else:
@@ -1363,10 +1637,11 @@ def application(environ, start_response):
         if not months:
             body = page(
                 lang, session["csrf"], i18n.text(lang, "home_title"),
-                '<h1 data-i18n="home_title">%s</h1>'
+                '<h1 data-i18n="home_title">%s</h1>%s'
                 '<p data-i18n="home_empty">%s</p>'
                 '<p><a href="/deals/new" data-i18n="home_new">%s</a></p>'
                 % (esc(i18n.text(lang, "home_title")),
+                   dashboard(lang, [], rule, offset, step),
                    esc(i18n.text(lang, "home_empty")),
                    esc(i18n.text(lang, "home_new"))),
                 "/", signed_in=True,
@@ -1382,7 +1657,7 @@ def application(environ, start_response):
             by_month[m].append(d)
         if active_months:
             sections = "".join(
-                forecast_section(lang, m, by_month.get(m, []), expenses)
+                forecast_section(lang, m, by_month.get(m, []), *rule(m))
                 for m in sorted(active_months)
             )
         else:
@@ -1393,9 +1668,10 @@ def application(environ, start_response):
             items_f = "".join('<li><a href="/deals/edit?id=%d">%s</a> \u00b7 %s</li>' % (d["id"], esc(d["name"]), esc(i18n.text(lang, "st_fallen"))) for d in fallen)
             fallen_html = '<details><summary data-i18n="fallen_title">%s (%d)</summary><ul>%s</ul></details>' % (esc(i18n.text(lang, "fallen_title")), len(fallen), items_f)
         body = page(lang, session["csrf"], i18n.text(lang, "home_title"),
-                    '<h1 data-i18n="home_title">%s</h1>%s<div class="forecast-grid">%s</div>%s'
+                    '<h1 data-i18n="home_title">%s</h1>%s%s<div class="forecast-grid">%s</div>%s'
                     % (esc(i18n.text(lang, "home_title")),
-                       forecast_strip(lang, active_deals, expenses), sections, fallen_html),
+                       dashboard(lang, active_deals, rule, offset, step),
+                       forecast_strip(lang, active_deals, lambda m: rule(m)[0]), sections, fallen_html),
                     "/", signed_in=True)
         return respond("200 OK", body)
 
@@ -1458,6 +1734,77 @@ def application(environ, start_response):
         }, tenant_id=session["tenant_id"])
         return redirect("/settings")
 
+    if path == "/expenses" and method == "GET":
+        query = read_query(environ)
+        month = query.get("month", "")
+        if not valid_month(month):
+            month = nl_today()[:7]
+        deals = store.list_deals(DB_PATH, tenant_id=session["tenant_id"])
+        body = page(lang, session["csrf"], i18n.text(lang, "exp_title"),
+                    expenses_page(lang, session["csrf"], month,
+                                  store.list_expenses(DB_PATH, session["tenant_id"], month=month), deals, {}, {}),
+                    "/expenses", signed_in=True)
+        return respond("200 OK", body)
+
+    if path in ("/expenses/add", "/expenses/update", "/expenses/delete") and method == "POST":
+        expense = None
+        if path != "/expenses/add":
+            try:
+                expense_id = int(read_query(environ).get("id", ""))
+            except (TypeError, ValueError):
+                expense_id = None
+            expense = store.get_expense(DB_PATH, session["tenant_id"], expense_id) if expense_id else None
+            if expense is None:
+                return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        if not csrf_ok(fields):
+            return forbidden()
+        if path == "/expenses/delete":
+            store.delete_expense(DB_PATH, session["tenant_id"], expense["id"])
+            return redirect("/expenses?month=" + expense["expense_date"][:7])
+        deals = store.list_deals(DB_PATH, tenant_id=session["tenant_id"])
+        errors, parsed = validate_expense(lang, fields, {d["id"] for d in deals})
+        if not errors:
+            try:
+                if expense is None:
+                    store.insert_expense(DB_PATH, session["tenant_id"], parsed)
+                elif not store.update_expense(DB_PATH, session["tenant_id"], expense["id"], parsed):
+                    return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
+            except ValueError:
+                errors["deal_id"] = i18n.text(lang, "err_amount")
+        if not errors:
+            return redirect("/expenses?month=" + parsed["expense_date"][:7])
+        values = {name: fields.get(name, "") for name in ("description", "amount", "status", "deal_id")}
+        values["expense_date"] = parsed["expense_date"]
+        if expense is None:
+            month = parsed["expense_date"][:7] if valid_date(parsed["expense_date"]) else nl_today()[:7]
+            content = expenses_page(lang, session["csrf"], month,
+                                    store.list_expenses(DB_PATH, session["tenant_id"], month=month),
+                                    deals, values, errors)
+        else:
+            content = expense_edit_page(lang, session["csrf"], expense["id"], values, errors, deals)
+        return respond("200 OK", page(lang, session["csrf"], i18n.text(lang, "exp_title"), content,
+                                      "/expenses", signed_in=True))
+
+    if path == "/expenses/edit" and method == "GET":
+        try:
+            expense_id = int(read_query(environ).get("id", ""))
+        except (TypeError, ValueError):
+            expense_id = None
+        expense = store.get_expense(DB_PATH, session["tenant_id"], expense_id) if expense_id else None
+        if expense is None:
+            return respond("404 Not Found", page(lang, session["csrf"], "Not found", "<p>Not found</p>", signed_in=True))
+        values = {"description": expense["description"],
+                  "amount": format_edit_amount(expense["amount_cents"], lang),
+                  "expense_date": expense["expense_date"], "status": expense["status"],
+                  "deal_id": expense["deal_id"]}
+        deals = store.list_deals(DB_PATH, tenant_id=session["tenant_id"])
+        return respond("200 OK", page(lang, session["csrf"], i18n.text(lang, "exp_edit"),
+                                      expense_edit_page(lang, session["csrf"], expense["id"], values, {}, deals),
+                                      "/expenses", signed_in=True))
+
     if path == "/deals/new" and method == "GET":
         settings = store.get_settings(DB_PATH, tenant_id=session["tenant_id"])
         body = page(lang, session["csrf"], i18n.text(lang, "deal_title"),
@@ -1503,7 +1850,7 @@ def application(environ, start_response):
         share_cents = agent_share(parsed["commission_cents"],
                                   parsed["share_rate"])
         result = single_figures(share_cents, settings,
-                                settings["expenses_cents"])
+                                expense_rule(session["tenant_id"])(parsed["month"])[0])
         key = secrets.token_urlsafe(16)
         shown = {
             "name": parsed["name"],
@@ -1551,7 +1898,7 @@ def application(environ, start_response):
         share_cents = agent_share(parsed["commission_cents"],
                                   parsed["share_rate"])
         result = single_figures(share_cents, settings,
-                                settings["expenses_cents"])
+                                expense_rule(session["tenant_id"])(parsed["month"])[0])
         try:
             shown = {
                 "share": int(fields.get("shown_share", "-1")),
@@ -1633,7 +1980,8 @@ def application(environ, start_response):
         if fields := {}:  # keep linter happy, not used
             pass
         body = page(lang, session["csrf"], i18n.text(lang, "deal_edit_title"),
-                    edit_form_html(lang, session["csrf"], did, values, {}),
+                    edit_form_html(lang, session["csrf"], did, values, {})
+                    + deal_expenses_section(lang, store.list_expenses(DB_PATH, session["tenant_id"], deal_id=did)),
                     "/deals/edit", signed_in=True)
         return respond("200 OK", body)
 

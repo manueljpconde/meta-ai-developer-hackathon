@@ -99,15 +99,14 @@ def calc_month(parts, expenses=0):
 
     Each part is calculated independently and the cent components are
     summed without re-rounding. Really available is bank inflow minus
-    protected money minus expenses and may be negative.
+    protected money minus expenses and may be negative. A month with no
+    parts still carries its expenses.
     """
     expense_cents = _check_amount(expenses, "expenses")
     if expense_cents < 0:
         raise ValueError("expenses must not be negative")
     if not isinstance(parts, (list, tuple)):
         raise ValueError("parts must be a list of part dicts")
-    if len(parts) == 0:
-        raise ValueError("parts must not be empty")
 
     allowed_keys = frozenset((
         "part_base",
@@ -163,3 +162,24 @@ def calc_month(parts, expenses=0):
         },
         "really_available": bank_inflow - protected_money - expense_cents,
     }
+
+
+def month_expenses(month, current_month, estimate_cents, recorded_cents=0,
+                   planned_cents=0):
+    """The expenses subtracted from one ``YYYY-MM`` month, and whether they are an estimate.
+
+    Past months use the recorded expenses; future months the estimate plus
+    the planned expenses; the current month the larger of recorded and
+    estimate. Returns ``(cents, estimated)``.
+    """
+    for value, name in ((estimate_cents, "estimate"), (recorded_cents, "recorded"),
+                        (planned_cents, "planned")):
+        if _check_amount(value, name) < 0:
+            raise ValueError(name + " must not be negative")
+    if month < current_month:
+        return recorded_cents, False
+    if month > current_month:
+        return estimate_cents + planned_cents, True
+    if recorded_cents >= estimate_cents:
+        return recorded_cents, False
+    return estimate_cents, True

@@ -678,13 +678,14 @@ class ForecastStripTest(StripBase):
         expenses = 35000
         november = (a["bank"] + b["bank"] - a["aside"] - b["aside"] - expenses, a["aside"] + b["aside"])
         december = (c["bank"] - c["aside"] - expenses, c["aside"])
-        return {"really": november[0] + december[0], "aside": november[1] + december[1],
+        january = -expenses  # item 6 C7: a future month with no deal still deducts the estimate
+        return {"really": november[0] + december[0] + january, "aside": november[1] + december[1],
                 "really_est": c["bank"] - c["aside"], "aside_est": c["aside"], "next_bank": b["bank"]}
 
     def test_each_total_equals_the_sum_of_the_card_lines_computed_independently(self):
         self.window_deals()
         want = self.expected()
-        self.assertEqual((want["really"], want["aside"]), (530000, 380000))
+        self.assertEqual((want["really"], want["aside"]), (495000, 380000))
         for lang in LANGS:
             body = self.home(lang)
             strip = self.strip(body)
@@ -694,11 +695,12 @@ class ForecastStripTest(StripBase):
             _, aside, _ = self.item(strip, "strip-aside")
             self.assertEqual(really, euros(want["really"], lang))
             self.assertEqual(aside, euros(want["aside"], lang))
-            # and the cards say the same: November and December card lines add up to the strip
+            # and the cards say the same: November and December card lines, less January's estimate
+            # (a month with no deal has no card), add up to the strip
             months = {"pt-PT": ("novembro de 2026", "dezembro de 2026"), "en-GB": ("November 2026", "December 2026")}[lang]
             card_really = sum(self.parse(self.card_lines(body, m, "m_really"), lang) for m in months)
             card_aside = sum(self.parse(self.card_lines(body, m, "m_set_aside"), lang) for m in months)
-            self.assertEqual((card_really, card_aside), (want["really"], want["aside"]))
+            self.assertEqual((card_really - 35000, card_aside), (want["really"], want["aside"]))
 
     @staticmethod
     def parse(text, lang):
