@@ -394,3 +394,25 @@ class ListeningAfterAQuestionTest(ExpenseBase):
     def test_no_speech_always_shows_the_tap_line_even_under_a_question(self):
         tap = self.script()[self.script().index("function tapToAnswer()"):self.script().index("function startRecording()")]
         self.assertIn('setText(workingEl, panel.getAttribute("data-tap-answer"))', tap)
+
+
+class SilentMicrophoneRecoveryTest(ExpenseBase):
+    """iPhone 2026-11-04: 'A ouvir…' stayed on screen; no samples arrived after the spoken question."""
+
+    def script(self):
+        from app.tests.test_item4f import SCRIPT
+        return SCRIPT
+
+    def test_two_seconds_without_samples_stops_listening_and_asks_for_a_tap(self):
+        s = self.script()
+        self.assertIn("var NO_SAMPLES_MS = 2000;", s)
+        record = s[s.index("function startRecording()"):s.index("function micBlocked()")]
+        self.assertIn("if (listening && total === 0) { finishListening(false); tapToAnswer(); }", record)
+
+    def test_a_tap_with_nothing_recorded_restarts_the_audio_afresh(self):
+        s = self.script()
+        tap = s[s.index("function onFalar()"):s.index("fab.addEventListener")]
+        self.assertIn("if (listening && total > 0) { finishListening(true); return; }", tap)
+        self.assertIn("if (convId.value) { releaseMic(); }", tap)
+        self.assertLess(tap.index("releaseMic();"), tap.index("prepareAudio();"))
+        self.assertLess(tap.index("prepareAudio();"), tap.index("listen(true);"))

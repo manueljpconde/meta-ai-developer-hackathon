@@ -33,7 +33,8 @@
 
   var stream = null, ctx = null, source = null, proc = null, node = null, recRate = 0;
   var chunks = [], total = 0, speechSeen = false, silent = 0, listening = false;
-  var speakTimer = null, busy = false;
+  var speakTimer = null, busy = false, watchdog = null;
+  var NO_SAMPLES_MS = 2000;
 
   function encodeWav(samples) {
     var n = samples.length;
@@ -364,6 +365,12 @@
     if (!(recRate > 0)) { micBlocked(); return; }
     chunks = []; total = 0; speechSeen = false; silent = 0; listening = true;
     showListening(true);
+    // iPhone: after speaking, the microphone can deliver nothing at all. Stop waiting and ask for a tap.
+    if (watchdog) { clearTimeout(watchdog); }
+    watchdog = setTimeout(function () {
+      watchdog = null;
+      if (listening && total === 0) { finishListening(false); tapToAnswer(); }
+    }, NO_SAMPLES_MS);
     // iOS leaves the context "interrupted" after speaking, not only "suspended".
     if (ctx && ctx.state !== "running" && ctx.resume) {
       var resumed = ctx.resume();
@@ -434,9 +441,12 @@
     openPanel();
     setBackdrop(true);
     if (panel.getAttribute("data-needs-settings") === "1") { showSettingsFirst(); return; }
-    if (listening) { finishListening(true); return; }
+    if (listening && total > 0) { finishListening(true); return; }
+    finishListening(false);
     stopSpeech();
     primeSpeech();
+    // A tap after the first turn starts the audio afresh, as the first tap does.
+    if (convId.value) { releaseMic(); }
     prepareAudio();
     listen(true);
   }
