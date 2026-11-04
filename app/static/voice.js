@@ -191,6 +191,17 @@
     return null;
   }
 
+  // Inside the tap: iOS speaks later only when speech started from a user gesture.
+  function primeSpeech() {
+    try {
+      if (window.speechSynthesis && typeof SpeechSynthesisUtterance !== "undefined") {
+        var u = new SpeechSynthesisUtterance(" ");
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+      }
+    } catch (e) {}
+  }
+
   function speak(text, lang, done) {
     if (!text || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
       done(); return;
@@ -278,7 +289,7 @@
 
   function sendText(text) {
     if (busy) { return; }
-    stopSpeech(); finishListening(false);
+    stopSpeech(); primeSpeech(); finishListening(false);
     setBusy(true);
     post("/voice/extract", { conversation_id: convId.value, text: text }).then(render, failed);
   }
@@ -405,6 +416,7 @@
     if (panel.getAttribute("data-needs-settings") === "1") { showSettingsFirst(); return; }
     if (listening) { finishListening(true); return; }
     stopSpeech();
+    primeSpeech();
     prepareAudio();
     listen(true);
   }
@@ -422,13 +434,13 @@
 
   confirmBtn.addEventListener("click", function () {
     if (busy) { return; }
-    stopSpeech(); finishListening(false);
+    stopSpeech(); primeSpeech(); finishListening(false);
     setBusy(true);
     post("/voice/confirm", { conversation_id: convId.value }).then(render, failed);
   });
 
   cancelBtn.addEventListener("click", function () {
-    stopSpeech(); finishListening(false);
+    stopSpeech(); primeSpeech(); finishListening(false);
     setBusy(true);
     post("/voice/cancel", { conversation_id: convId.value }).then(render, failed);
   });

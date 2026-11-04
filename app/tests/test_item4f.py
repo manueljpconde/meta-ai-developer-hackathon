@@ -333,7 +333,7 @@ class WaitingIsVisibleTest(VoiceTestCase):
 
     def test_a_second_send_is_impossible_while_waiting(self):
         self.assertIn("if (!text || busy) { return; }", SCRIPT)
-        self.assertIn("if (busy) { return; }\n    stopSpeech(); finishListening(false);\n    setBusy(true);", SCRIPT)
+        self.assertIn("if (busy) { return; }\n    stopSpeech(); primeSpeech(); finishListening(false);\n    setBusy(true);", SCRIPT)
         self.assertIn("sendBtn.disabled = on;", SCRIPT)
         confirm = SCRIPT[SCRIPT.index('confirmBtn.addEventListener("click"'):SCRIPT.index('cancelBtn.addEventListener("click"')]
         self.assertIn("if (busy) { return; }", confirm)

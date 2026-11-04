@@ -193,11 +193,9 @@ def _advance(env, conv, text):
         extracted = _extract(text)
     except voice_mod.ModelError:
         return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"))
-    if extracted.get("intent") == "question":
-        qlang = vf.lang_from_model(extracted.get("language"), lang)
-        return _end(conv, "ended", qlang, _t(qlang, "voice_question_fallback"))
-    if not vf.is_short_answer(text):
-        conv["lang"] = lang = vf.lang_from_model(extracted.get("language"), lang)
+    if extracted.get("intent") == "question" and vf.KIND_MAP.get(extracted.get("kind")) is None:
+        # A real question never ends the conversation: say so and keep listening.
+        return _payload(conv, "ask", lang, question=_t(lang, "voice_question_fallback"))
     kind = conv["kind"] or vf.KIND_MAP.get(extracted.get("kind"))
     if kind is None:
         return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"))
@@ -322,7 +320,9 @@ def handle_audio(env, query, wav):
         return _payload(conv, "error", lang, message=_t(lang, "voice_wav_error"),
                         diagnostic=refusal_diagnostic(query, wav))
     try:
-        transcript, _raw = _client("TRANSCRIBE_CLIENT", voice_mod.TranscriptionClient).transcribe(wav)
+        client = _client("TRANSCRIBE_CLIENT", voice_mod.TranscriptionClient)
+        client.language = lang
+        transcript, _raw = client.transcribe(wav)
     except Exception:
         return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"),
                         diagnostic=recording_diagnostic(query, wav))

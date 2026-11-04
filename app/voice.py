@@ -24,6 +24,7 @@ import urllib.error
 MODEL_NAME = "muse-spark-1.3"
 TRANSCRIBE_MODEL = "muse-voice-transcribe-1.0"
 TRANSCRIBE_PATH = "/asr/transcribe"
+TRANSCRIBE_KEYWORDS = ("comissão", "percentagem", "escritura", "CPCV", "negócio", "potencial", "provável", "confirmado")
 MAX_AUDIO_SECONDS = 60
 MAX_AUDIO_BYTES = 16000 * 2 * MAX_AUDIO_SECONDS  # audio bytes of 60 s, mono 16-bit 16 kHz
 
@@ -173,7 +174,7 @@ class ModelError(Exception):
 EXTRACTION_PROMPT = (
     "An estate agent speaks or types one update, in Portuguese or English. "
     "Reply with exactly one JSON object and nothing else. Keys: "
-    '"intent" ("update", or "question" when the agent asks something instead of reporting), '
+    '"intent" ("update", or "question" only when the agent asks something and states no deal facts; a message that states deal facts is an update even when it is phrased or transcribed as a question), '
     '"language" ("pt" or "en", the language of the message), '
     '"kind" (one of new_deal, cpcv_signed, escritura_date, fell_through, commission_received, '
     "change_stage, change_commission, change_percentage, reopen). "
@@ -198,7 +199,12 @@ class TranscriptionClient:
     def transcribe(self, wav_bytes):
         # Build multipart body exactly 2 parts
         boundary = "----VoiceBoundary123"
-        meta = json.dumps({"model": TRANSCRIBE_MODEL, "audioEncoding": "WAV"})
+        request = {"model": TRANSCRIBE_MODEL, "audioEncoding": "WAV"}
+        language = getattr(self, "language", None)
+        if language:
+            request["language"] = language.split("-")[0]
+            request["keywords"] = list(TRANSCRIBE_KEYWORDS)
+        meta = json.dumps(request)
         body = io.BytesIO()
         body.write(("--%s\r\n" % boundary).encode())
         body.write(b'Content-Disposition: form-data; name="request"\r\n')
@@ -220,6 +226,7 @@ class TranscriptionClient:
             },
             method="POST",
         )
+        t0 = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = resp.read()
@@ -227,6 +234,8 @@ class TranscriptionClient:
             raise ModelError("transcription HTTP %d" % e.code)
         except Exception as e:
             raise ModelError(str(e))
+        finally:
+            print("TIMING transcribe %d ms audio_bytes=%d" % ((time.monotonic() - t0) * 1000, len(wav_bytes)), flush=True)
         try:
             obj = json.loads(data.decode())
             return obj.get("transcript", ""), obj
@@ -240,7 +249,7 @@ class TranscriptionClient:
 
 class ExtractionClient:
     """Extraction via muse-spark-1.3 chat completions."""
-    def __init__(self, api_key=None, api_base=None, timeout=30):
+    def __init__(self, api_key=None, api_base=None, timeout=45):
         self.api_key = api_key or os.environ.get("META_API_KEY", "")
         self.api_base = api_base or os.environ.get("META_API_BASE_URL", "https://api.meta.ai/v1")
         self.timeout = timeout
@@ -253,6 +262,8 @@ class ExtractionClient:
                 {"role": "user", "content": text},
             ],
             "temperature": 0,
+            # Muse always reasons; picking a few fields needs the least of it.
+            "reasoning_effort": "minimal",
         }
         req = urllib.request.Request(
             self.api_base.rstrip("/") + "/chat/completions",
@@ -260,6 +271,7 @@ class ExtractionClient:
             headers={"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"},
             method="POST",
         )
+        t0 = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 body = resp.read()
@@ -267,6 +279,8 @@ class ExtractionClient:
             raise ModelError("extraction HTTP %d" % e.code)
         except Exception as e:
             raise ModelError(str(e))
+        finally:
+            print("TIMING extract %d ms text_chars=%d" % ((time.monotonic() - t0) * 1000, len(text)), flush=True)
         try:
             obj = json.loads(body.decode())
             content = obj["choices"][0]["message"]["content"]

@@ -197,8 +197,19 @@ class StopsTest(VoiceTestCase):
             extraction = ScriptedExtraction({"intent": "question", "language": code})
             with stub_clients(extraction):
                 data = self.voice("/voice/extract", self.page_token(page_lang), page_lang, text="quanto?")
-            self.assertEqual((data["state"], data["message"]), ("ended", reply))
+            self.assertEqual((data["state"], data["question"]), ("ask", reply))
+            self.assertNotEqual(data["conversation_id"], "")
             self.assertEqual(self.deals(), [])
+
+    def test_deal_facts_phrased_as_a_question_are_an_update(self):
+        extraction = ScriptedExtraction({"intent": "question", "language": "pt", "kind": "new_deal",
+                                         "name": "T4 Amadora", "escritura_date": "2027-06"})
+        with stub_clients(extraction):
+            data = self.voice("/voice/extract", self.page_token("pt-PT"), "pt-PT",
+                              text="Quer criar um negócio? Quer um T4 na Amadora, para junho de 2027?")
+        self.assertEqual(data["state"], "ask")
+        self.assertNotEqual(data["question"], "Ainda não sei responder a perguntas.")
+        self.assertEqual(self.deals(), [])
 
     def test_daily_limit_refused_without_model_call_in_page_language(self):
         for _ in range(store.VOICE_DAILY_LIMIT):
@@ -695,7 +706,7 @@ class DealMatchingTest(VoiceTestCase):
 
 
 class LanguageTest(VoiceTestCase):
-    def test_an_english_answer_on_a_portuguese_page_gets_english_questions(self):
+    def test_an_english_answer_on_a_portuguese_page_keeps_portuguese_questions(self):
         extraction = ScriptedExtraction(
             update("new_deal", "pt", name="T3 Lang"),
             update("new_deal", "en", commission="10000"))
@@ -706,18 +717,18 @@ class LanguageTest(VoiceTestCase):
             self.assertTrue(first["question"].startswith("Qual é"))
             second = self.voice("/voice/extract", token, "pt-PT", conversation_id=first["conversation_id"],
                                 text="the commission is ten thousand")
-        self.assertEqual(second["lang"], "en-GB")
-        self.assertTrue(second["question"].startswith("What is"), second["question"])
+        self.assertEqual(second["lang"], "pt-PT")
+        self.assertTrue(second["question"].startswith("Qual é"), second["question"])
 
     def test_a_short_answer_keeps_the_conversations_language(self):
         extraction = ScriptedExtraction(
             update("new_deal", "en", name="T3 Short", stage="provavel", escritura_date="2026-12-15"),
             update("new_deal", "pt", share="40"))
         with stub_clients(extraction):
-            token = self.page_token("pt-PT")
-            first = self.voice("/voice/extract", token, "pt-PT", text="new deal T3 Short")
+            token = self.page_token("en-GB")
+            first = self.voice("/voice/extract", token, "en-GB", text="new deal T3 Short")
             self.assertEqual(first["lang"], "en-GB")
-            second = self.voice("/voice/extract", token, "pt-PT", conversation_id=first["conversation_id"], text="40")
+            second = self.voice("/voice/extract", token, "en-GB", conversation_id=first["conversation_id"], text="40")
         self.assertEqual(second["lang"], "en-GB")
         self.assertEqual(second["state"], "ask")
         self.assertEqual(second["question"], "What is the commission?")
@@ -755,7 +766,8 @@ class TypedConversationTest(VoiceTestCase):
         extraction = ScriptedExtraction(update("new_deal", "en", name="T1 Plain"))
         with stub_clients(extraction):
             token = self.page_token("en-GB")
-            response = self.client.post("/voice/extract", {"csrf_token": token, "text": "new T1 Plain"})
+            response = self.client.request("POST", "/voice/extract", params={"csrf_token": token, "text": "new T1 Plain"},
+                                           accept_language="en-GB")
         self.assertIn("What is", response.body)
         self.assertIn('placeholder="Type here…"', response.body)
         self.assertIn(">Cancel<", response.body)
@@ -1094,12 +1106,12 @@ class SpokenFullConversationTest(VoiceTestCase):
                         "What is the commission and your share?",
                         "T3 Benfica, €10,000, 40%, your share €4,000, escritura Dec 15. Do you confirm?", "yes")
 
-    def test_an_english_conversation_on_a_portuguese_page_is_spoken_back_in_english(self):
-        first, second = self.run_spoken("pt-PT", "en", ("new deal T3 Benfica", "10,000 euros and 40 percent"),
-                                        "What is the commission and your share?",
-                                        "T3 Benfica, €10,000, 40%, your share €4,000, escritura Dec 15. Do you confirm?",
-                                        "yes")
-        self.assertEqual((first["lang"], second["lang"]), ("en-GB", "en-GB"))
+    def test_a_misheard_language_on_a_portuguese_page_is_still_spoken_back_in_portuguese(self):
+        first, second = self.run_spoken("pt-PT", "en", ("novo T3 Benfica", "20,000 euros"),
+                                        "Qual é a comissão e a tua percentagem?",
+                                        "T3 Benfica, 10\u00a0000 €, 40 %, a tua parte 4\u00a0000 €, escritura 15 dez. Confirmas?",
+                                        "sim")
+        self.assertEqual((first["lang"], second["lang"]), ("pt-PT", "pt-PT"))
 
     def test_a_spoken_correction_with_the_field_omitted_asks_again_and_a_spoken_yes_saves_nothing(self):
         extraction = ScriptedExtraction(
