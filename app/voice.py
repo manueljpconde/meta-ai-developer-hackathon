@@ -91,6 +91,18 @@ def validate_wav(data):
     # refuse it before any model call, like every other broken header.
     if len(data) - offset < declared:
         return False, "truncated"
+    # Every byte after the declared data payload must belong to a valid
+    # following RIFF chunk (each with its whole 8-byte header and size
+    # present), and the walk must end exactly at the end of the body. Raw
+    # audio the data chunk does not declare is not a chunk: a data size
+    # that understates the body is an invalid container, and so is a
+    # container cut off inside a later chunk.
+    tail = offset + declared + (declared & 1)
+    while tail + 8 <= len(data):
+        chunk_size = struct.unpack_from("<I", data, tail + 4)[0]
+        tail += 8 + chunk_size + (chunk_size & 1)
+    if tail != len(data):
+        return False, "structure"
     # The audio must be a whole number of samples, not a fraction of one.
     if declared % (channels * bits // 8):
         return False, "align"

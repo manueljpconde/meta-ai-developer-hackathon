@@ -109,6 +109,29 @@ def wav_with_an_odd_data_length():
     return bytes(wav)
 
 
+def wav_with_a_data_chunk_that_understates_the_body():
+    """QA's no_go on version 2 (seq 7600): the outer RIFF size is correct
+    but the data chunk declares 16 000 bytes at byte 40 while the body
+    holds 32 000 audio bytes. The undeclared remainder is raw audio, not
+    a valid following RIFF chunk, so the container is invalid."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    struct.pack_into("<I", wav, 40, 16000)
+    return bytes(wav)
+
+
+def wav_with_a_valid_chunk_after_the_data_chunk():
+    """A complete, valid WAV whose data chunk is followed by a well-formed
+    LIST chunk: every byte of the body is accounted for by a valid RIFF
+    chunk, so this one is still measured (half a second, the declared
+    data length)."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    audio = bytes(wav[44:44 + 16000])
+    extra = b"LIST" + struct.pack("<I", 6) + b"INFOxy"
+    return (b"RIFF" + struct.pack("<I", 36 + 16000 + len(extra)) + b"WAVE" +
+            b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16) +
+            b"data" + struct.pack("<I", 16000) + audio + extra)
+
+
 class RealServerTestCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -522,6 +545,78 @@ class RealServerRefusalDiagnostic(RealServerTestCase):
                                                       "duration_seconds": None,
                                                       "peak": None}, name)
                 self.assertEqual(store.count_deals(self.db), 0, name)
+
+    # QA's no_go on version 2 (seq 7600): a data chunk that understates the
+    # body was still measured on both early refusal paths, because the
+    # undeclared remainder was never checked to be valid RIFF chunks. The
+    # complete chunk structure is validated: a body is measured only when
+    # every byte is accounted for by the declared data length or a valid
+    # following chunk.
+
+    def test_without_settings_a_data_chunk_that_understates_the_body_reports_duration_and_peak_null(self):
+        mail.OUTBOX = []
+        self.sign_in("no-settings-understated@example.com", "en-GB")
+        data = self.transcribe(wav_with_a_data_chunk_that_understates_the_body())
+        self.assertEqual(data["state"], "settings_first")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_settings_first"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_over_the_daily_limit_a_data_chunk_that_understates_the_body_reports_duration_and_peak_null(self):
+        mail.OUTBOX = []
+        email = "limit-understated@example.com"
+        self.sign_in(email, "en-GB")
+        self.save_settings("en-GB")
+        tenant = self.tenant(email)
+        for _ in range(store.VOICE_DAILY_LIMIT):
+            self.assertTrue(store.check_voice_limit(self.db, tenant))
+        data = self.transcribe(wav_with_a_data_chunk_that_understates_the_body())
+        self.assertEqual(data["state"], "ended")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_limit_reached"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_an_understating_data_chunk_is_refused_on_the_normal_path_too(self):
+        mail.OUTBOX = []
+        self.sign_in("understated@example.com", "en-GB")
+        self.save_settings("en-GB")
+        data = self.transcribe(wav_with_a_data_chunk_that_understates_the_body())
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_wav_error"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_a_wav_with_a_valid_following_chunk_after_the_data_chunk_is_still_measured(self):
+        # The chunk walk must not over-refuse: a data chunk followed by a
+        # well-formed LIST chunk is a complete, valid WAV, so the early
+        # refusal paths measure it (duration from the declared data
+        # length, peak of the declared samples).
+        mail.OUTBOX = []
+        self.sign_in("no-settings-trailing-chunk@example.com", "en-GB")
+        data = self.transcribe(wav_with_a_valid_chunk_after_the_data_chunk())
+        self.assertEqual(data["state"], "settings_first")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": 0.5,
+                                              "peak": 0.5})
+
+        mail.OUTBOX = []
+        email = "limit-trailing-chunk@example.com"
+        self.sign_in(email, "en-GB")
+        self.save_settings("en-GB")
+        tenant = self.tenant(email)
+        for _ in range(store.VOICE_DAILY_LIMIT):
+            self.assertTrue(store.check_voice_limit(self.db, tenant))
+        data = self.transcribe(wav_with_a_valid_chunk_after_the_data_chunk())
+        self.assertEqual(data["state"], "ended")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": 0.5,
+                                              "peak": 0.5})
 
     def test_a_complete_valid_wav_on_the_early_paths_still_reports_duration_and_peak(self):
         # Keeping valid-WAV behaviour unchanged: the early refusal paths
