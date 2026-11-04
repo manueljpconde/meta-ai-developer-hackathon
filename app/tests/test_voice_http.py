@@ -229,8 +229,12 @@ class RealServerTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         [mail_sent] = mail.OUTBOX
         self.assertEqual(mail_sent["to"], email)
-        status, home = b.get(mail_sent["link"].split("127.0.0.1")[-1] if "127.0.0.1" in mail_sent["link"]
-                             else "/auth/verify?token=" + mail_sent["link"].split("token=")[1])
+        status, opened = b.get(mail_sent["link"].split("127.0.0.1")[-1] if "127.0.0.1" in mail_sent["link"]
+                               else "/auth/verify?token=" + mail_sent["link"].split("token=")[1])
+        self.assertEqual(status, 200)
+        self.assertNotIn('id="voicePanel"', opened, "opening the link alone signs nobody in")
+        status, _, home = b.post("/auth/verify", {"token": re.search(r'name="token" value="([^"]+)"', opened).group(1),
+                                                  "csrf_token": token_in(opened)})
         self.assertEqual(status, 200)
         self.assertIn('id="voicePanel"', home, "signed in after opening the link")
         return home

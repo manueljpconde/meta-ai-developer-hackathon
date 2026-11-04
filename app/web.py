@@ -363,7 +363,7 @@ def is_public_path(path):
 APP_ROUTES = [
     ("/", "GET"),
     ("/signin", "GET"), ("/signin", "POST"),
-    ("/auth/verify", "GET"),
+    ("/auth/verify", "GET"), ("/auth/verify", "POST"),
     ("/signout", "POST"),
     ("/account/delete", "GET"), ("/account/delete", "POST"),
     ("/static/style.css", "GET"), ("/static/voice.js", "GET"),
@@ -1634,13 +1634,25 @@ def application(environ, start_response):
                     check_email_page(lang, esc(email)) + signin_page(lang, session["csrf"], email, ""), "/signin")
         return respond("200 OK", body)
     if path == "/auth/verify" and method == "GET":
-        query = read_query(environ)
-        token = query.get("token", "")
-        if not token:
+        # Opening the link changes nothing: mail apps and link previews fetch it on their own.
+        token = read_query(environ).get("token", "")
+        if not token or auth.peek_link(DB_PATH, token) is None:
             body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
                         '<p class="error" data-i18n="auth_invalid">%s</p>' % esc(i18n.text(lang, "auth_invalid")), "/signin")
             return respond("200 OK", body)
-        link = auth.verify_link(DB_PATH, token)
+        body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
+                    '<div class="signin"><h1 data-i18n="signin_heading">%s</h1><p data-i18n="auth_confirm_prompt">%s</p>'
+                    '<form method="post" action="/auth/verify"><input type="hidden" name="csrf_token" value="%s">'
+                    '<input type="hidden" name="token" value="%s">'
+                    '<button type="submit" data-i18n="auth_confirm_button">%s</button></form></div>'
+                    % (esc(i18n.text(lang, "signin_heading")), esc(i18n.text(lang, "auth_confirm_prompt")),
+                       esc(session["csrf"]), esc(token), esc(i18n.text(lang, "auth_confirm_button"))), "/signin")
+        return respond("200 OK", body)
+    if path == "/auth/verify" and method == "POST":
+        fields = read_post_form()
+        if not isinstance(fields, dict):
+            return fields
+        link = auth.verify_link(DB_PATH, fields.get("token", "")) if csrf_ok(fields) and fields.get("token") else None
         if link is None:
             body = page(lang, session["csrf"], i18n.text(lang, "signin_title"),
                         '<p class="error" data-i18n="auth_invalid">%s</p>' % esc(i18n.text(lang, "auth_invalid")), "/signin")

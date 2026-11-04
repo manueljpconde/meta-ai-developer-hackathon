@@ -160,6 +160,13 @@ def csrf_token(body):
     return hidden_inputs(body)["csrf_token"]
 
 
+def open_link(client, token):
+    """Open a sign-in link as a person does: the page, then its Sign in button (only the POST uses the link)."""
+    opened = client.get("/auth/verify?token=" + token)
+    fields = hidden_inputs(opened.body)
+    return client.post("/auth/verify", {"token": fields["token"], "csrf_token": fields["csrf_token"]})
+
+
 class AppTestCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

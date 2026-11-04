@@ -52,6 +52,16 @@ def request_link(path, email, ip, lang="pt-PT", now=None, token=None):
     return True, token
 
 
+def peek_link(path, token, now=None):
+    """The link if it is unused and unexpired, without using it (opening a link changes nothing)."""
+    if now is None:
+        now = time.time()
+    link = store.get_login_link(path, hash_token(token))
+    if link is None or link["used"] or now > link["expires_at"]:
+        return None
+    return link
+
+
 def verify_link(path, token, now=None):
     if now is None:
         now = time.time()
