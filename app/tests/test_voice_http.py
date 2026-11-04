@@ -77,6 +77,38 @@ def spoken_tone_wav(seconds, amplitude):
             b"data" + struct.pack("<I", len(data)) + data)
 
 
+def wav_with_riff_size_overstating_the_body():
+    """A container cut off in transit: the RIFF size field declares 2 000
+    bytes more than the body holds (34 044 total against 32 044 present)."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    struct.pack_into("<I", wav, 4, len(wav) - 8 + 2000)
+    return bytes(wav)
+
+
+def wav_with_riff_size_too_small():
+    """An outer RIFF size that declares a 28-byte file inside a 32 044-byte
+    body."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    struct.pack_into("<I", wav, 4, 20)  # 20 + 8 = 28 declared total
+    return bytes(wav)
+
+
+def wav_with_zero_byte_rate_and_alignment():
+    """A PCM header whose byte rate and block alignment are both zero."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    struct.pack_into("<I", wav, 28, 0)   # byte rate
+    struct.pack_into("<H", wav, 32, 0)   # block alignment
+    return bytes(wav)
+
+
+def wav_with_an_odd_data_length():
+    """A data chunk that declares 31 999 bytes, not a whole number of
+    two-byte samples."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    struct.pack_into("<I", wav, 40, 31999)
+    return bytes(wav)
+
+
 class RealServerTestCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -428,6 +460,93 @@ class RealServerRefusalDiagnostic(RealServerTestCase):
                                               "duration_seconds": None,
                                               "peak": None})
         self.assertEqual(store.count_deals(self.db), 0)
+
+    # QA's no_go on version 1 (seq 7549): the early-refusal validation read
+    # only the RIFF marker and the declared data-chunk length, so malformed
+    # containers were still measured. Only a complete, structurally valid
+    # WAV is measured: the outer RIFF size must match the body, the data
+    # chunk must match, PCM block alignment and byte rate must be valid and
+    # consistent, and the data length must be a whole number of samples.
+
+    MALFORMED = (
+        ("an overstated outer RIFF size", "wav_with_riff_size_overstating_the_body"),
+        ("zero byte rate and block alignment", "wav_with_zero_byte_rate_and_alignment"),
+        ("an outer RIFF size too small for the body", "wav_with_riff_size_too_small"),
+        ("an odd data length", "wav_with_an_odd_data_length"),
+    )
+
+    def test_without_settings_a_malformed_container_over_http_reports_duration_and_peak_null(self):
+        for name, factory in self.MALFORMED:
+            with self.subTest(wav=name):
+                mail.OUTBOX = []
+                self.sign_in("no-settings-%s@example.com" % factory, "en-GB")
+                data = self.transcribe(globals()[factory]())
+                self.assertEqual(data["state"], "settings_first", name)
+                self.assertEqual(data["message"], i18n.text("en-GB", "voice_settings_first"), name)
+                self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                                      "duration_seconds": None,
+                                                      "peak": None}, name)
+                self.assertEqual(store.count_deals(self.db), 0, name)
+
+    def test_over_the_daily_limit_a_malformed_container_over_http_reports_duration_and_peak_null(self):
+        for name, factory in self.MALFORMED:
+            with self.subTest(wav=name):
+                mail.OUTBOX = []
+                email = "limit-%s@example.com" % factory
+                self.sign_in(email, "en-GB")
+                self.save_settings("en-GB")
+                tenant = self.tenant(email)
+                for _ in range(store.VOICE_DAILY_LIMIT):
+                    self.assertTrue(store.check_voice_limit(self.db, tenant))
+                data = self.transcribe(globals()[factory]())
+                self.assertEqual(data["state"], "ended", name)
+                self.assertEqual(data["message"], i18n.text("en-GB", "voice_limit_reached"), name)
+                self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                                      "duration_seconds": None,
+                                                      "peak": None}, name)
+                self.assertEqual(store.count_deals(self.db), 0, name)
+
+    def test_a_malformed_container_over_http_is_refused_on_the_normal_path_too(self):
+        # The same strict validation guards the normal error path: nothing is
+        # measured of a container whose structure is broken.
+        for name, factory in self.MALFORMED:
+            with self.subTest(wav=name):
+                mail.OUTBOX = []
+                email = "malformed-%s@example.com" % factory
+                self.sign_in(email, "en-GB")
+                self.save_settings("en-GB")
+                data = self.transcribe(globals()[factory]())
+                self.assertEqual(data["state"], "error", name)
+                self.assertEqual(data["message"], i18n.text("en-GB", "voice_wav_error"), name)
+                self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                                      "duration_seconds": None,
+                                                      "peak": None}, name)
+                self.assertEqual(store.count_deals(self.db), 0, name)
+
+    def test_a_complete_valid_wav_on_the_early_paths_still_reports_duration_and_peak(self):
+        # Keeping valid-WAV behaviour unchanged: the early refusal paths
+        # measure a complete, valid WAV exactly as before (owner's rulings
+        # at seq 7094 and 7360).
+        mail.OUTBOX = []
+        self.sign_in("no-settings-valid@example.com", "en-GB")
+        data = self.transcribe(spoken_tone_wav(1, 0.5))
+        self.assertEqual(data["state"], "settings_first")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": 1.0,
+                                              "peak": 0.5})
+
+        mail.OUTBOX = []
+        email = "limit-valid@example.com"
+        self.sign_in(email, "en-GB")
+        self.save_settings("en-GB")
+        tenant = self.tenant(email)
+        for _ in range(store.VOICE_DAILY_LIMIT):
+            self.assertTrue(store.check_voice_limit(self.db, tenant))
+        data = self.transcribe(spoken_tone_wav(1, 0.5))
+        self.assertEqual(data["state"], "ended")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": 1.0,
+                                              "peak": 0.5})
 
 
 if __name__ == "__main__":

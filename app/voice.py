@@ -7,7 +7,9 @@ Transcription spec (criterion 9): POST {base}/asr/transcribe with
 multipart of exactly two parts: request+json and audio/wav.
 Extraction spec (criterion 11): POST /chat/completions model muse-spark-1.3.
 
-WAV validation: RIFF/WAVE, PCM, mono, 16-bit, 16000 Hz, max 60s cap.
+WAV validation: RIFF/WAVE, PCM, mono, 16-bit, 16000 Hz, sizes that match
+the body (outer RIFF length, data-chunk length, block alignment, byte rate,
+whole samples), max 60s cap.
 Daily cap 30 per tenant checked before any model call.
 Per-conversation 6-question cap.
 """
@@ -30,7 +32,9 @@ WAV_HEADER_SIZE = 44
 
 
 def validate_wav(data):
-    """Check WAV header: RIFF/WAVE, PCM, mono, 16-bit, 16000 Hz. Return (ok, error_key)."""
+    """Check the WAV container end to end: RIFF/WAVE, PCM, mono, 16-bit,
+    16000 Hz, a size accounting that matches the body actually present and
+    a whole number of samples. Return (ok, error_key)."""
     if len(data) < WAV_HEADER_SIZE:
         return False, "short"
     if data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
@@ -38,8 +42,11 @@ def validate_wav(data):
     if data[12:16] != b"fmt ":
         return False, "fmt"
     try:
+        riff_size = struct.unpack_from("<I", data, 4)[0]
         fmt_size = struct.unpack_from("<I", data, 16)[0]
         audio_format, channels, sample_rate = struct.unpack_from("<HHI", data, 20)
+        byte_rate = struct.unpack_from("<I", data, 28)[0]
+        block_align = struct.unpack_from("<H", data, 32)[0]
         bits = struct.unpack_from("<H", data, 34)[0]
     except struct.error:
         return False, "parse"
@@ -53,6 +60,18 @@ def validate_wav(data):
         return False, "rate"
     if bits != 16:
         return False, "bits"
+    # The PCM block alignment and byte rate must be valid and consistent
+    # with mono 16-bit 16 kHz audio: a whole sample per block and the
+    # sample rate times that block.
+    if block_align != channels * bits // 8:
+        return False, "align"
+    if byte_rate != sample_rate * block_align:
+        return False, "byte_rate"
+    # The outer RIFF size counts everything after the 8-byte RIFF header;
+    # it must match the body actually present, or the container was cut
+    # off in transit (a size too small) or overstates it (a size too big).
+    if riff_size != len(data) - 8:
+        return False, "riff_size"
     # The data chunk follows the fmt chunk (chunks are padded to even sizes).
     # The duration is the larger of what the data chunk declares and the audio
     # bytes actually present, so an understating header cannot pass the cap.
@@ -72,6 +91,9 @@ def validate_wav(data):
     # refuse it before any model call, like every other broken header.
     if len(data) - offset < declared:
         return False, "truncated"
+    # The audio must be a whole number of samples, not a fraction of one.
+    if declared % (channels * bits // 8):
+        return False, "align"
     if max(declared, len(data) - offset) > MAX_AUDIO_BYTES:
         return False, "duration"
     return True, ""
