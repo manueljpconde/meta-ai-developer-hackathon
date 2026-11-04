@@ -179,6 +179,10 @@ class DashboardTest(ExpenseBase):
         body = self.home()
         self.assertLess(body.index("dash-headline"), body.index("forecast-grid"))
 
+    def test_the_past_block_is_called_closed(self):
+        self.assertIn('data-i18n="dash_received">Fechado</h2>', self.home())
+        self.assertIn('data-i18n="dash_received">Closed</h2>', self.home(lang="en-GB"))
+
 
 class ExpensePagesTest(ExpenseBase):
     def test_nav_has_despesas_between_new_deal_and_settings(self):
