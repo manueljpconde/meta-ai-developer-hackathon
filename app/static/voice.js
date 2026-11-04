@@ -412,6 +412,22 @@
     } else { useScriptProcessor(); }
   }
 
+  // iPhone and iPad: speaking the question interrupts the page's audio, and a context made in the
+  // tap cannot be resumed without another tap. With a live capture WebKit lets a new one run.
+  var IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  function restartAfterSpeech() {
+    releaseMic();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { tapToAnswer(); return; }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      var Fresh = window.AudioContext || window.webkitAudioContext;
+      try { ctx = Fresh ? new Fresh() : null; } catch (e) { ctx = null; }
+      if (!ctx) { s.getTracks().forEach(function (t) { t.stop(); }); tapToAnswer(); return; }
+      if (ctx.state !== "running" && ctx.resume) { var r = ctx.resume(); if (r && r.catch) { r.catch(function () {}); } }
+      attach(s);
+    }, function () { tapToAnswer(); });
+  }
+
   // Inside the tap, before the microphone is asked for: iOS leaves a context made later suspended.
   function prepareAudio() {
     var AC = window.AudioContext || window.webkitAudioContext;
@@ -426,6 +442,7 @@
 
   function listen(fromTap) {
     if (busy || listening || panel.hidden) { return; }
+    if (IOS && !fromTap && convId.value) { restartAfterSpeech(); return; }
     if (stream && ctx) {
       // Safari can end or mute the microphone track after speaking: ask for a live one again.
       var track = stream.getAudioTracks()[0];

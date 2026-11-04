@@ -182,9 +182,11 @@ class ServedScriptRecordingTest(AppTestCase):
         listen = SCRIPT[SCRIPT.index("function listen("):SCRIPT.index("function onFalar()")]
         self.assertNotIn("new AC()", listen, "a context made outside a tap stays suspended on iOS")
         self.assertIn("getUserMedia", listen)
-        # created and resumed before the microphone is asked for, in order of the source
-        self.assertLess(SCRIPT.index("new AC()"), SCRIPT.index("getUserMedia"))
-        self.assertLess(SCRIPT.index("ctx.resume()"), SCRIPT.index("getUserMedia"))
+        # on the tap path, created and resumed before the microphone is asked for, in order of the source
+        # (the iPhone restart after a spoken question asks for the microphone first, outside a tap)
+        tap_mic = SCRIPT.index("getUserMedia", SCRIPT.index("function listen("))
+        self.assertLess(SCRIPT.index("new AC()"), tap_mic)
+        self.assertLess(SCRIPT.index("ctx.resume()"), tap_mic)
 
     def test_only_a_tap_may_create_the_context_and_other_turns_ask_for_one_tap(self):
         listen = SCRIPT[SCRIPT.index("function listen("):SCRIPT.index("function onFalar()")]

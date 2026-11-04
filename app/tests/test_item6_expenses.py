@@ -438,3 +438,17 @@ class NewDealAnswersUnderUpdateNamesTest(ExpenseBase):
         self.assertEqual(third["state"], "confirm", third)
         self.assertIn("4", third["readback"])
         self.assertIn("(estimada)", third["readback"])
+
+
+class IphoneAutoListenTest(ExpenseBase):
+    """iPhone 2026-11-04: after the first spoken question the agent had to tap to answer."""
+
+    def test_on_ios_the_next_answer_starts_a_fresh_capture_then_a_fresh_context(self):
+        from app.tests.test_item4f import SCRIPT
+        restart = SCRIPT[SCRIPT.index("function restartAfterSpeech()"):SCRIPT.index("function prepareAudio()")]
+        self.assertLess(restart.index("releaseMic();"), restart.index("getUserMedia"))
+        self.assertLess(restart.index("getUserMedia"), restart.index("new Fresh()"))
+        self.assertIn("attach(s);", restart)
+        listen = SCRIPT[SCRIPT.index("function listen("):SCRIPT.index("function onFalar()")]
+        self.assertIn("if (IOS && !fromTap && convId.value) { restartAfterSpeech(); return; }", listen)
+        self.assertIn("navigator.maxTouchPoints > 1", SCRIPT, "an iPad that reports itself as a Mac counts")
