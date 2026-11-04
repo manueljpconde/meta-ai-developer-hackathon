@@ -76,25 +76,12 @@ sudo ufw enable
 The app itself listens only on `127.0.0.1`; the firewall exposes
 only SSH, HTTP (certificate issuance) and HTTPS.
 
-## 7. Smoke test (issue #16)
-
-```sh
-cd /opt/agentimo
-BASE=https://<your-domain> python3 deploy/smoke.py "$BASE"
-```
-
-The script checks `/`, `/deals/new`, `/settings` and
-`/scenarios/move` load, then posts `Move the Benfica payment to
-January` and requires a before/after forecast naming Benfica, the
-source month and the target month. It exits non-zero on failure.
-
-## 8. Updates
+## 7. Updates
 
 ```sh
 cd /opt/agentimo
 sudo -u agentimo git pull
 sudo systemctl restart agentimo
-BASE=https://<your-domain> python3 deploy/smoke.py "$BASE"
 ```
 
 Data stays in `/var/lib/agentimo/agentimo.db`, untouched by updates.
