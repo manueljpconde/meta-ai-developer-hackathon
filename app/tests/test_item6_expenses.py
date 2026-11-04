@@ -323,3 +323,34 @@ class SigninWidthTest(ExpenseBase):
         from app.tests.test_item4f import declarations
         self.assertIn("max-width:28rem", declarations(".signin"))
         self.assertIn('<div class="signin">', Client().get("/signin").body)
+
+
+class DashboardChartTest(ExpenseBase):
+    def chart(self, body):
+        return body[body.index('<section class="dash-card dash-chart">'):body.index("dash-blocks")]
+
+    def test_one_column_per_window_month_with_its_value_and_a_today_mark(self):
+        self.add_deal("Out", date="2026-10-20")
+        self.add_deal("Dez", date="2026-12-10", stage="provavel")
+        chart = self.chart(self.home())
+        self.assertEqual(chart.count("<title>"), 6)
+        for label in (">ago 2026<", ">set<", ">out<", ">nov<", ">dez<", ">jan 2027<"):
+            self.assertIn(label, chart)
+        self.assertIn(">2 400 €</text>", chart)  # October: no recorded expenses
+        self.assertIn(">2 050 €</text>", chart)  # December: less the 350 EUR estimate
+        self.assertIn('fill="#a7cec0"', chart)
+        self.assertIn(">hoje</text>", chart)
+        self.assertNotIn("<script", chart)
+
+    def test_a_negative_month_is_flagged_in_chart_row_and_headline(self):
+        body = self.home()
+        chart = self.chart(body)
+        self.assertIn('fill="#9e2f25"', chart)
+        self.assertIn("⚠ -350 €", chart)
+        self.assertIn("As despesas são maiores do que o que entra: faltam 350,00 €.", body)
+        self.assertIn("⚠ 3 mês(es) negativo(s)", body)
+        self.assertIn("3 negative month(s)", self.home(lang="en-GB"))
+
+    def test_the_chart_follows_the_window(self):
+        self.assertIn("jan 2028", self.chart(self.home("?w=12")))
+        self.assertIn("ago 2025", self.chart(self.home("?w=-12")))

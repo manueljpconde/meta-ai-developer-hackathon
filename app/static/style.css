@@ -346,3 +346,16 @@ header .header-tools form{margin:0}
 }
 /* Sign-in keeps a form-sized width on wide screens */
 .signin { max-width: 28rem; }
+/* Dashboard chart: inline SVG, text in ink, red only for a negative month (with its icon and label) */
+.dash-chart svg { display: block; width: 100%; max-width: 720px; height: auto; margin: 0 auto; }
+.dash-chart text { font-size: 13px; fill: #16302c; }
+.dash-chart .dash-chart-val { font-weight: 700; }
+.dash-chart .dash-chart-month, .dash-chart .dash-chart-today { fill: #5f6f6a; }
+.dash-chart .dash-chart-today { font-size: 11px; }
+.dash-chart .dash-chart-neg { font-weight: 700; fill: #9e2f25; }
+.dash-neg { color: #9e2f25; font-weight: 600; }
+.dash-seg--negative { background: #9e2f25; }
+@media (max-width: 600px) {
+  .dash-chart text { font-size: 22px; }
+  .dash-chart .dash-chart-today { font-size: 18px; }
+}

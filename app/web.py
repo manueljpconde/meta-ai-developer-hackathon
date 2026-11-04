@@ -945,6 +945,74 @@ def _width(value, top):
     return "w%d" % max(1, min(20, round(value * 20 / top)))
 
 
+STAGE_FILL = {"confirmado": "#16302c", "provavel": "#a7cec0", "potencial": "#f2b705"}
+NEGATIVE_FILL = "#9e2f25"
+
+
+def whole_amount(cents, lang):
+    """An amount rounded to whole euros, for chart labels."""
+    shown = format_amount(int(round(cents / 100.0)) * 100, lang)
+    return shown.replace(",00 \u20ac", " \u20ac") if lang == "pt-PT" else shown[:-3]
+
+
+def dashboard_chart(lang, rows, current):
+    """Columns of really yours per month, as inline SVG (no script): closed months in ink,
+    expected months split by stage, a negative month in red below zero, a mark at today."""
+    width, top, plot = 600, 28, 170
+    slot = (width - 40) / len(rows)
+    high = max([r["really"] for r in rows] + [0])
+    low = min([r["really"] for r in rows] + [0])
+    scale = plot / ((high - low) or 1)
+    zero = top + high * scale
+    parts = ['<line x1="36" x2="%d" y1="%.1f" y2="%.1f" stroke="#16302c"/>' % (width, zero, zero)]
+    for i, row in enumerate(rows):
+        x = 40 + i * slot + slot * 0.2
+        bar = slot * 0.6
+        value = row["really"]
+        if value < 0:
+            height = -value * scale
+            marks = '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s"/>' % (
+                x, zero, bar, height, NEGATIVE_FILL)
+            label = '<text x="%.1f" y="%.1f" text-anchor="middle" class="dash-chart-neg">\u26a0 %s</text>' % (
+                x + bar / 2, zero + height + 18, esc(whole_amount(value, lang)))
+        else:
+            height = value * scale
+            if row["month"] < current:
+                shares = [("#16302c", value)]
+            else:
+                positive = {code: max(v, 0) for code, v in row["stages"].items()}
+                total = sum(positive.values()) or 1
+                shares = [(STAGE_FILL[code], value * positive[code] / total)
+                          for code in ("confirmado", "provavel", "potencial") if positive[code]]
+            marks, y = "", zero
+            for fill, part in shares:
+                h = part * scale
+                y -= h
+                marks += '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s"/>' % (x, y, bar, h, fill)
+            label = '<text x="%.1f" y="%.1f" text-anchor="middle" class="dash-chart-val">%s</text>' % (
+                x + bar / 2, zero - height - 6, esc(whole_amount(value, lang)))
+        tip = "%s: %s" % (short_month(row["month"], lang), format_amount(value, lang))
+        parts.append('<g><title>%s</title><rect x="%.1f" y="0" width="%.1f" height="%d" fill="transparent"/>%s%s'
+                     '<text x="%.1f" y="%d" text-anchor="middle" class="dash-chart-month">%s</text></g>'
+                     % (esc(tip), 40 + i * slot, slot, top + plot + 40, marks, label,
+                        x + bar / 2, top + plot + 34,
+                        esc(short_month(row["month"], lang) if i == 0 or row["month"].endswith("-01")
+                            else short_month(row["month"], lang)[:3])))
+        if row["month"] == current:
+            mx = 40 + i * slot - 2
+            parts.append('<line x1="%.1f" x2="%.1f" y1="10" y2="%d" stroke="#5f6f6a" stroke-dasharray="4 4"/>'
+                         '<text x="%.1f" y="12" class="dash-chart-today">%s</text>'
+                         % (mx, mx, top + plot + 20, mx + 4, esc(i18n.text(lang, "dash_today_mark"))))
+    names = [(("confirmado", "%s / %s" % (i18n.text(lang, "dash_closed_legend"), i18n.text(lang, "st_confirmado").lower())))]
+    names += [(css, i18n.text(lang, key)) for css, key in (("provavel", "st_provavel"), ("potencial", "st_potencial"),
+                                                           ("negative", "dash_negative_legend"))]
+    legend = "".join('<span><i class="dash-seg--%s"></i>%s</span>' % (css, esc(text)) for css, text in names)
+    return ('<section class="dash-card dash-chart"><h2 data-i18n="dash_chart_title">%s</h2>'
+            '<svg viewBox="0 0 %d %d" role="img" aria-label="%s">%s</svg><p class="dash-legend">%s</p></section>'
+            % (esc(i18n.text(lang, "dash_chart_title")), width, top + plot + 44,
+               esc(i18n.text(lang, "dash_chart_title")), "".join(parts), legend))
+
+
 def dashboard(lang, deals, rule, offset, step):
     """Headline, timeline controls, Recebido and Previsto, all from the same engine.calc rows."""
     past, future = dashboard_months(nl_today()[:7], offset)
@@ -961,6 +1029,9 @@ def dashboard(lang, deals, rule, offset, step):
         "confirmed": '<span class="dash-confirmed">%s</span>' % money(
             sum(r["stages"]["confirmado"] for r in expected)),
     }
+    negative = sum(1 for r in received + expected if r["really"] < 0)
+    if negative:
+        headline += ' \u00b7 <span class="dash-neg">\u26a0 %s</span>' % esc(i18n.text(lang, "dash_negative_n") % negative)
 
     def link(target, key, text, css):
         if target is None:
@@ -983,12 +1054,17 @@ def dashboard(lang, deals, rule, offset, step):
            link(next_target, "dash_next", "▶", "dash-arrow"),
            steps, esc(i18n.text(lang, "dash_today"))))
 
+    def short_note(row):
+        if row["really"] >= 0:
+            return ""
+        return ' <span class="dash-neg">%s</span>' % esc(i18n.text(lang, "dash_short") % format_amount(-row["really"], lang))
+
     def exp_label(row):
         return esc(i18n.text(lang, "dash_exp_est" if row["estimated"] else "dash_exp"))
 
     def received_row(row):
         line = esc(i18n.text(lang, "dash_line_past")) % {
-            "exp_label": exp_label(row), "exp": money(row["expenses"]), "really": money(row["really"])}
+            "exp_label": exp_label(row), "exp": money(row["expenses"]), "really": money(row["really"])} + short_note(row)
         return ('<div class="dash-row"><span class="dash-month">%s</span>'
                 '<span class="dash-bar"><span class="dash-seg dash-seg--confirmado %s"></span></span>'
                 '<b class="dash-amount">%s</b><small class="dash-line">%s</small></div>'
@@ -1000,20 +1076,23 @@ def dashboard(lang, deals, rule, offset, step):
         line = esc(i18n.text(lang, "dash_line_future")) % {
             "bank": money(row["bank"]), "aside": money(row["aside"]),
             "exp_label": exp_label(row), "exp": money(row["expenses"])}
+        line += short_note(row)
         if row["estimated_dates"]:
             line += ' <em>%s</em>' % esc(i18n.text(lang, "dash_estimated_n") % row["estimated_dates"])
         return ('<div class="dash-row"><span class="dash-month">%s</span><span class="dash-bar">%s</span>'
-                '<b class="dash-amount">%s</b><small class="dash-line">%s</small></div>'
-                % (esc(short_month(row["month"], lang)), segments, money(row["really"]), line))
+                '<b class="dash-amount%s">%s</b><small class="dash-line">%s</small></div>'
+                % (esc(short_month(row["month"], lang)), segments, " dash-neg" if row["really"] < 0 else "",
+                   ("\u26a0 " if row["really"] < 0 else "") + money(row["really"]), line))
 
     legend = "".join('<span><i class="dash-seg--%s"></i>%s</span>' % (code, esc(i18n.text(lang, "st_" + code)))
                      for code in ("confirmado", "provavel", "potencial"))
     return (
-        '<div class="dashboard"><p class="dash-headline">%s</p>%s<div class="dash-blocks">'
+        '<div class="dashboard"><p class="dash-headline">%s</p>%s%s<div class="dash-blocks">'
         '<section class="dash-card dash-received"><h2 data-i18n="dash_received">%s</h2>%s</section>'
         '<section class="dash-card dash-expected"><h2 data-i18n="dash_expected">%s</h2>%s'
         '<p class="dash-legend">%s</p></section></div></div>'
-        % (headline, controls, esc(i18n.text(lang, "dash_received")), "".join(map(received_row, received)),
+        % (headline, controls, dashboard_chart(lang, received + expected, nl_today()[:7]),
+           esc(i18n.text(lang, "dash_received")), "".join(map(received_row, received)),
            esc(i18n.text(lang, "dash_expected")), "".join(map(expected_row, expected)), legend))
 
 
