@@ -344,3 +344,5 @@ header .header-tools form{margin:0}
 @media (min-width: 1024px) {
   .dash-blocks { grid-template-columns: 2fr 3fr; }
 }
+/* Sign-in keeps a form-sized width on wide screens */
+.signin { max-width: 28rem; }

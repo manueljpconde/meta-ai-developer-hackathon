@@ -312,3 +312,10 @@ class ExpenseTenantTest(ExpenseBase):
             values.update(fields)
             with self.assertRaises(ValueError):
                 store.insert_expense(self.db_path, self.tenant, values)
+
+
+class SigninWidthTest(ExpenseBase):
+    def test_the_signin_form_keeps_a_form_width_on_desktop(self):
+        from app.tests.test_item4f import declarations
+        self.assertIn("max-width:28rem", declarations(".signin"))
+        self.assertIn('<div class="signin">', Client().get("/signin").body)
