@@ -26,7 +26,30 @@ def send_signin_link(email, token, lang, base_url, config=None):
     if OUTBOX is not None:
         OUTBOX.append({"to": email, "subject": subject, "body": body, "link": link, "lang": lang})
         return
+    _relay(msg)
 
+
+def send_new_account_notice(email, created_at):
+    """Tell the owner (OWNER_NOTIFY_EMAIL) that an account was created; nothing when unset."""
+    owner = os.environ.get("OWNER_NOTIFY_EMAIL", "").strip()
+    if not owner:
+        return
+    from datetime import datetime, timezone
+    when = datetime.fromtimestamp(created_at, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    subject = "Nova conta no Agentimo: %s" % email
+    body = "Foi criada uma conta no Agentimo.\n\nEmail: %s\nData: %s\n" % (email, when)
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = "hello@propware.pt"
+    msg["To"] = owner
+    msg.set_content(body)
+    if OUTBOX is not None:
+        OUTBOX.append({"to": owner, "subject": subject, "body": body})
+        return
+    _relay(msg)
+
+
+def _relay(msg):
     relay_host = os.environ.get("PROPWARE_RELAY_HOST", "")
     relay_port = int(os.environ.get("PROPWARE_RELAY_PORT", "587") or "587")
     relay_user = os.environ.get("PROPWARE_RELAY_USER", "")

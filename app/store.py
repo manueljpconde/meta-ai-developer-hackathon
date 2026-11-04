@@ -552,10 +552,10 @@ def get_or_create_tenant(path, email, now=None):
     init_db(path)
     conn = _connect(path)
     try:
-        conn.execute(
+        created = conn.execute(
             "INSERT OR IGNORE INTO tenants (email, created_at) VALUES (?, ?)",
             (email, now),
-        )
+        ).rowcount == 1
         conn.commit()
         row = conn.execute(
             "SELECT id, email, created_at FROM tenants WHERE email = ?",
@@ -563,7 +563,7 @@ def get_or_create_tenant(path, email, now=None):
         ).fetchone()
     finally:
         conn.close()
-    return {"id": row[0], "email": row[1], "created_at": row[2]}
+    return {"id": row[0], "email": row[1], "created_at": row[2], "created": created}
 
 
 def delete_tenant(path, tenant_id):

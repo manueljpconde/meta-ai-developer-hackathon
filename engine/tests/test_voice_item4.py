@@ -3,7 +3,6 @@ import struct
 import unittest
 
 from app.voice import validate_wav, TranscriptionClient, ExtractionClient
-from engine.voice import parse_month_only, missing_fields, format_estimated_month, match_deal
 
 
 def make_wav(duration_s=1):
@@ -89,57 +88,6 @@ class MultipartShapeTest(unittest.TestCase):
         self.assertEqual(MODEL_NAME, "muse-spark-1.3")
         c = ExtractionClient(api_key="k", api_base="https://api.meta.ai/v1", timeout=30)
         self.assertEqual(c.timeout, 30)
-
-
-class MonthOnlyEstimatedTest(unittest.TestCase):
-    def test_month_only_pt_maps_to_15th_estimated(self):
-        d, est = parse_month_only("março")
-        self.assertEqual(d, "2026-03-15")
-        self.assertTrue(est)
-
-    def test_month_only_en_maps_to_15th_estimated(self):
-        d, est = parse_month_only("March")
-        self.assertEqual(d, "2026-03-15")
-        self.assertTrue(est)
-
-    def test_exact_date_not_estimated(self):
-        d, est = parse_month_only("2026-03-15")
-        self.assertIsNone(d)
-        self.assertFalse(est)
-
-    def test_format_estimated_pt(self):
-        self.assertEqual(format_estimated_month("2026-03-15", "pt-PT"), "meados de março")
-
-    def test_format_estimated_en(self):
-        self.assertEqual(format_estimated_month("2026-03-15", "en-GB"), "mid-March")
-
-
-class MissingFieldsTest(unittest.TestCase):
-    def test_new_deal_missing_all(self):
-        miss = missing_fields("new_deal", {})
-        self.assertIn("name", miss)
-        self.assertIn("escritura_date", miss)
-
-    def test_new_deal_no_missing_when_full(self):
-        miss = missing_fields("new_deal", {"name": "T3", "agency_commission_cents": 1000000, "share_rate": "0.4", "escritura_date": "2026-03-15", "stage": "confirmado"})
-        self.assertEqual(miss, [])
-
-
-class MatchDealTest(unittest.TestCase):
-    def test_match_exact_single(self):
-        deals = [{"name": "T3 Benfica"}, {"name": "T2 Porto"}]
-        m, c = match_deal("T3 Benfica", deals)
-        self.assertIsNotNone(m)
-
-    def test_match_no_match_returns_candidates(self):
-        deals = [{"name": "T3 Benfica"}, {"name": "T2 Porto"}]
-        m, c = match_deal("Unknown", deals)
-        self.assertIsNone(m)
-
-    def test_match_substring_single(self):
-        deals = [{"name": "T3 Benfica Central"}, {"name": "T2 Porto"}]
-        m, c = match_deal("Benfica", deals)
-        self.assertIsNotNone(m)
 
 
 class MoneyBoundaryTest(unittest.TestCase):

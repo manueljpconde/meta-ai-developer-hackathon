@@ -4,8 +4,9 @@ import hashlib
 import secrets
 import time
 import re
+import sys
 
-from app import store
+from app import mail, store
 
 LINK_EXPIRY_SECONDS = 15 * 60
 SESSION_EXPIRY_SECONDS = 24 * 3600
@@ -76,6 +77,11 @@ def verify_link(path, token, now=None):
     store.mark_link_used(path, token_hash)
     tenant = store.get_or_create_tenant(path, link["email"], now=now)
     link["tenant_id"] = tenant["id"]
+    if tenant["created"]:
+        try:
+            mail.send_new_account_notice(tenant["email"], tenant["created_at"])
+        except Exception as exc:  # the owner's notice never blocks a sign-in
+            print("new account notice failed: %s" % type(exc).__name__, file=sys.stderr)
     return link
 
 
