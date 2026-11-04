@@ -416,3 +416,25 @@ class SilentMicrophoneRecoveryTest(ExpenseBase):
         self.assertIn("if (convId.value) { releaseMic(); }", tap)
         self.assertLess(tap.index("releaseMic();"), tap.index("prepareAudio();"))
         self.assertLess(tap.index("prepareAudio();"), tap.index("listen(true);"))
+
+
+class NewDealAnswersUnderUpdateNamesTest(ExpenseBase):
+    """iPhone 2026-11-04: the model's real replies (replayed on the box); the percentage was asked forever."""
+
+    def test_percentage_and_a_month_only_date_complete_a_new_deal(self):
+        from app.tests.voice_support import ScriptedExtraction, stub_clients, update
+        extraction = ScriptedExtraction(
+            {"intent": "update", "language": "pt", "kind": "new_deal", "name": "T4 no infantado", "date": "2026-12"},
+            {"intent": "update", "language": "pt", "kind": "change_commission", "commission": 10000},
+            {"intent": "update", "language": "pt", "kind": "change_percentage", "percentage": 4, "stage": "potencial"})
+        with stub_clients(extraction):
+            token = self.page_token()
+            first = self.voice("/voice/extract", token, text="Quero registar um novo deal, um T4 no infantado, para dezembro de 2026.")
+            self.assertEqual(first["state"], "ask")
+            self.assertNotIn("data da escritura", first["question"], "the month said is kept")
+            second = self.voice("/voice/extract", token, conversation_id=first["conversation_id"], text="Comissão. Dez mil euros.")
+            third = self.voice("/voice/extract", token, conversation_id=second["conversation_id"],
+                               text="A minha percentagem é de quatro por cento, potencial.")
+        self.assertEqual(third["state"], "confirm", third)
+        self.assertIn("4", third["readback"])
+        self.assertIn("(estimada)", third["readback"])

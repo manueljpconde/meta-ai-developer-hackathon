@@ -316,6 +316,12 @@ def merge_extraction(conv, extracted, said=None):
     """
     ex = conv["extracted"]
     kind = conv.get("kind")
+    if kind == "new_deal":
+        # Answers to a new deal's questions can come back under an update's field names.
+        extracted = dict(extracted)
+        for source, target in (("percentage", "share"), ("date", "escritura_date")):
+            if extracted.get(target) in (None, "") and extracted.get(source) not in (None, ""):
+                extracted[target] = extracted.pop(source)
     supplied = set()
     flagged = _truthy(extracted.get("escritura_estimada"))
     for key in ("name", "deal", "agency"):
