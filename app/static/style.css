@@ -260,7 +260,6 @@ fieldset label input[type="radio"] { width: auto; min-height: auto; display: inl
 .voice-actions{display:flex;gap:0.5rem;margin:0.5rem 0}
 main{padding-bottom:5rem}
 @media(min-width:1024px){.voice-falar-fixed{display:none}.voice-falar-header{display:inline-flex}.voice-panel{left:50%;transform:translateX(-50%);max-width:40rem;width:100%;padding-bottom:0.75rem}main{padding-bottom:0}}
-@media(max-width:1023px){.voice-falar-header{display:none}}
 
 /* Item 4f: icon, panel order, sheet on wide screens, header, forecast strip */
 .mic-icon{display:block;width:28px;height:28px;fill:currentColor;color:#fff}
@@ -359,3 +358,5 @@ header .header-tools form{margin:0}
   .dash-chart text { font-size: 22px; }
   .dash-chart .dash-chart-today { font-size: 18px; }
 }
+/* One Falar button per width: the round fixed one below 1024px, the header one from 1024px */
+@media(max-width:1023px){.voice-falar-header{display:none}}

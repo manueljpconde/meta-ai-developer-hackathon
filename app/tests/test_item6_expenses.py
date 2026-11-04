@@ -354,3 +354,14 @@ class DashboardChartTest(ExpenseBase):
     def test_the_chart_follows_the_window(self):
         self.assertIn("jan 2028", self.chart(self.home("?w=12")))
         self.assertIn("ago 2025", self.chart(self.home("?w=-12")))
+
+
+class OneFalarButtonTest(ExpenseBase):
+    def test_below_1024_the_header_falar_is_hidden_by_the_last_rule_that_sets_its_display(self):
+        from app.tests.test_item4f import CSS, css_rules
+        last = None
+        for media, selector, decl in css_rules(CSS):
+            if selector == ".voice-falar-header" and "display:" in decl and (media == "" or "1023px" in media):
+                last = (media, decl)
+        self.assertIn("1023px", last[0])
+        self.assertIn("display:none", last[1])
