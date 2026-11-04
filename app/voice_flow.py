@@ -32,6 +32,7 @@ REQUIRED = {
     "change_commission": ("deal", "commission"),
     "change_percentage": ("deal", "percentage"),
     "reopen": ("deal",),
+    "expense": ("description", "amount"),
 }
 
 KIND_MAP = {
@@ -45,9 +46,10 @@ KIND_MAP = {
     "change_commission": "change_commission",
     "change_percentage": "change_percentage",
     "reopen": "reopen",
+    "expense": "expense",
 }
 
-DEAL_KINDS = tuple(k for k in REQUIRED if k != "new_deal")
+DEAL_KINDS = tuple(k for k in REQUIRED if k not in ("new_deal", "expense"))
 
 STAGE_WORDS = {
     "potencial": "potencial", "potential": "potencial",
@@ -324,7 +326,7 @@ def merge_extraction(conv, extracted, said=None):
                 extracted[target] = extracted.pop(source)
     supplied = set()
     flagged = _truthy(extracted.get("escritura_estimada"))
-    for key in ("name", "deal", "agency"):
+    for key in ("name", "deal", "agency", "description"):
         if extracted.get(key) not in (None, ""):
             cleaned = _clean_text(extracted[key])
             if cleaned:
@@ -350,6 +352,18 @@ def merge_extraction(conv, extracted, said=None):
             supplied.add(key)
         elif raw not in (None, ""):
             ex.pop(key, None)  # a stated but unusable share is asked again, never kept
+    if kind == "expense":
+        if ex.get("description"):
+            ex["description"] = ex["description"][0].upper() + ex["description"][1:]
+        day = extracted.get("day")
+        if isinstance(day, int) and not isinstance(day, bool) and extracted.get("date") in (None, ""):
+            iso = "%s-%02d" % (today_iso()[:7], day)
+            if parse_date(iso)[0] == iso:
+                ex["date"] = iso
+                supplied.add("date")
+    if extracted.get("status") in ("paid", "planned"):
+        ex["status"] = extracted["status"]
+        supplied.add("status")
     stage = parse_stage(extracted.get("stage"))
     if stage:
         ex["stage"] = stage
@@ -621,6 +635,8 @@ def resolve(conv, deals, fallen, lang):
     kind = conv["kind"]
     ex = conv["extracted"]
     missing = missing_for(kind, ex)
+    if kind == "expense":
+        return _resolve_expense(conv, deals, missing, lang)
     pool = fallen if kind == "reopen" else deals
     if kind in DEAL_KINDS and "deal" not in missing:
         found = match_deals(ex["deal"], pool)
@@ -644,6 +660,40 @@ def resolve(conv, deals, fallen, lang):
         deal = next((d for d in pool if d["id"] == conv["deal_id"]), None)
     line, mine = readback(conv, deal, lang)
     return Outcome("confirm", line, mine)
+
+
+def today_iso():
+    from app import web
+    return web.nl_today()
+
+
+def _resolve_expense(conv, deals, missing, lang):
+    """An expense: its deal is optional, its date defaults to today, paid unless said planned."""
+    ex = conv["extracted"]
+    if ex.get("deal"):
+        found = match_deals(ex["deal"], deals)
+        if len(found) == 1:
+            conv["deal_id"] = found[0]["id"]
+            ex["deal"] = found[0]["name"]
+        else:
+            spoken = ex.pop("deal")
+            conv["deal_id"] = None
+            if deals:
+                question = i18n.text(lang, "voice_which_deal") % ", ".join(d["name"] for d in (found or deals)[:5])
+                if not found:
+                    question = i18n.text(lang, "voice_not_found") % spoken + " " + question
+                return Outcome("ask", question)
+    if missing:
+        return Outcome("ask", question_for_missing(missing, lang))
+    ex.setdefault("date", today_iso())
+    ex.setdefault("status", "paid")
+    when = i18n.text(lang, "voice_today") if ex["date"] == today_iso() else format_date(ex["date"], False, lang)
+    line = "%s, %s, %s" % (ex["description"], format_euros(ex["amount"], lang), when)
+    if conv.get("deal_id"):
+        line += ", " + i18n.text(lang, "voice_expense_deal") % ex["deal"]
+    if ex["status"] == "planned":
+        line += ", " + i18n.text(lang, "voice_expense_planned")
+    return Outcome("confirm", line + ". " + i18n.text(lang, "voice_confirm_q"))
 
 
 def readback(conv, deal, lang):

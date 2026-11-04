@@ -129,7 +129,11 @@ def _save(env, conv):
     key = "voice-" + conv["id"]
     failed = _payload(conv, "error", lang, message=_t(lang, "voice_save_failed"))
     try:
-        if kind == "new_deal":
+        if kind == "expense":
+            store.insert_expense(env.db, env.tenant, {
+                "description": ex["description"], "amount_cents": ex["amount"],
+                "expense_date": ex["date"], "status": ex["status"], "deal_id": conv.get("deal_id")})
+        elif kind == "new_deal":
             settings = store.get_settings(env.db, tenant_id=env.tenant)
             if settings is None:
                 return _payload(conv, "error", lang, message=_t(lang, "voice_no_settings"))
@@ -193,6 +197,8 @@ def _advance(env, conv, text):
         extracted = _extract(text)
     except voice_mod.ModelError:
         return _payload(conv, "error", lang, message=_t(lang, "voice_model_error"))
+    if extracted.get("intent") == "expense":
+        extracted["kind"] = "expense"
     if extracted.get("intent") == "question" and vf.KIND_MAP.get(extracted.get("kind")) is None:
         # A real question never ends the conversation: say so and keep listening.
         return _payload(conv, "ask", lang, question=_t(lang, "voice_question_fallback"))

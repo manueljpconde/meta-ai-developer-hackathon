@@ -452,3 +452,29 @@ class IphoneAutoListenTest(ExpenseBase):
         listen = SCRIPT[SCRIPT.index("function listen("):SCRIPT.index("function onFalar()")]
         self.assertIn("if (IOS && !fromTap && convId.value) { restartAfterSpeech(); return; }", listen)
         self.assertIn("navigator.maxTouchPoints > 1", SCRIPT, "an iPad that reports itself as a Mac counts")
+
+
+class CommissionIsTheAgencysTest(ExpenseBase):
+    """Owner 2026-11-04: "comissão" always means the agency's commission."""
+
+    def test_month_cards_call_the_agents_part_a_tua_parte_never_comissao(self):
+        self.add_deal("Nov", commission=1000000, date="2026-11-20")
+        card = self.card(self.home(), "novembro de 2026")
+        self.assertIn('data-i18n="m_share">A tua parte</dt><dd>4 000,00 €</dd>', card)
+        self.assertNotIn("Comissão", card)
+
+    def test_review_shows_the_agency_commission_and_then_the_agents_part(self):
+        response = self.review()
+        self.assertIn('data-i18n="m_agency_commission">Comissão da agência</dt><dd>10 000,00 €</dd>', response.body)
+        self.assertIn('data-i18n="m_share">A tua parte</dt><dd>5 000,00 €</dd>', response.body)
+        self.assertEqual(response.body.count('data-i18n="m_share"'), 1)
+
+    def test_a_deal_page_shows_what_it_leaves_less_its_linked_expenses(self):
+        deal_id = self.add_deal("T2 Alvalade", date="2026-12-15")
+        self.expense("2026-11-03", 12000, deal_id=deal_id)
+        page = self.client.get("/deals/edit?id=%d" % deal_id).body
+        self.assertIn("O que este negócio deixa</dt><dd>%s" % euros(DEAL["bank"] - DEAL["aside"], "pt-PT"), page)
+        self.assertIn("Despesas ligadas</dt><dd>%s" % euros(12000, "pt-PT"), page)
+        self.assertIn(euros(DEAL["bank"] - DEAL["aside"] - 12000, "pt-PT"), page)
+        # the forecast is unchanged: the lunch counts in November, never in December
+        self.assertEqual(self.rule("2026-12"), (ESTIMATE, True))

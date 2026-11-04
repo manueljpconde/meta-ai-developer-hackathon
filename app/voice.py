@@ -172,12 +172,12 @@ class ModelError(Exception):
 
 
 EXTRACTION_PROMPT = (
-    "An estate agent speaks or types one update, in Portuguese or English. "
+    "An estate agent speaks or types one update or one expense, in Portuguese or English. "
     "Reply with exactly one JSON object and nothing else. Keys: "
-    '"intent" ("update", or "question" only when the agent asks something and states no deal facts; a message that states deal facts is an update even when it is phrased or transcribed as a question), '
+    '"intent" ("expense" when the agent tells money they spent or will spend, "update", or "question" only when the agent asks something and states no deal facts; a message that states deal facts is an update even when it is phrased or transcribed as a question), '
     '"language" ("pt" or "en", the language of the message), '
     '"kind" (one of new_deal, cpcv_signed, escritura_date, fell_through, commission_received, '
-    "change_stage, change_commission, change_percentage, reopen). "
+    "change_stage, change_commission, change_percentage, reopen, expense). "
     "Include only facts that were stated, never a guess: "
     '"name" (new deal) or "deal" (an existing deal), "agency", '
     '"commission" (agency commission in euros, excluding IVA), '
@@ -185,7 +185,10 @@ EXTRACTION_PROMPT = (
     '"percentage" (a changed percentage), "amount" (euros received), '
     '"stage" (potencial, provavel or confirmado), '
     '"escritura_date" or "date" (YYYY-MM-DD when the day is said, YYYY-MM when only a month is said), '
-    '"cpcv_date". Leave out every key that was not stated. '
+    '"cpcv_date". For an expense: "description" (short, e.g. "Almoço com o cliente Alberto"), "amount" (euros), '
+    '"date" (only when said), "day" (a day of the month said without a month, e.g. "dia 20" gives 20), "status" ("paid" when already paid or said in the past, "planned" for '
+    '"vou ter de pagar" or anything still to pay), "deal" (only when a deal is named). '
+    'Leave out every key that was not stated. '
     "Small transcription errors in names and numbers are tolerated."
 )
 

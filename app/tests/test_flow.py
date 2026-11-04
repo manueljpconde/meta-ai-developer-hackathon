@@ -21,7 +21,7 @@ class ReviewFiguresTest(AppTestCase):
             "1 150,00",
             "250,00",
             "500,00",
-            "2 650,00",
+            "3 000,00",  # this deal alone: the month's expenses are deducted in the forecast
         ):
             self.assertIn(expected, response.body)
 
@@ -90,9 +90,9 @@ class ConfirmFlowTest(AppTestCase):
             "share": "50",
             "iva": "23",
             "retencao": "25",
-            "irs": "30",
+            "irs": "35",
             "ss": "10",
-            "expenses": "700,00",
+            "expenses": "350,00",
             "form_locale": "pt-PT",
             "csrf_token": csrf_token(changed),
         }
@@ -129,7 +129,7 @@ class EnglishFiguresTest(AppTestCase):
             "1,150.00",
             "250.00",
             "500.00",
-            "2,650.00",
+            "3,000.00",
             "November 2026",
         ):
             self.assertIn(expected, response.body)

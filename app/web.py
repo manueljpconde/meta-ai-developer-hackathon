@@ -656,22 +656,22 @@ def deal_form(lang, csrf, values, errors, settings):
     )
 
 
-def figures_list(lang, share_cents, result):
+def figures_list(lang, share_cents, result, agency_cents):
     breakdown = result["protected_breakdown"]
     return (
         "<dl>"
+        '<dt data-i18n="m_agency_commission">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_share">%s</dt><dd>%s</dd>'
-        '<dt data-i18n="m_commission">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_protected">%s</dt><dd>%s</dd>'
         "<dd>%s %s; %s %s; %s %s</dd>"
         '<dt data-i18n="m_really">%s</dt><dd>%s</dd>'
         "</dl>"
         % (
+            esc(i18n.text(lang, "m_agency_commission")),
+            esc(format_amount(agency_cents, lang)),
             esc(i18n.text(lang, "m_share")),
             esc(format_amount(share_cents, lang)),
-            esc(i18n.text(lang, "m_commission")),
-            esc(format_amount(result["commission"], lang)),
             esc(i18n.text(lang, "m_bank")),
             esc(format_amount(result["bank_inflow"], lang)),
             esc(i18n.text(lang, "m_protected")),
@@ -688,7 +688,7 @@ def figures_list(lang, share_cents, result):
     )
 
 
-def review_page(lang, csrf, fields, share_cents, result, stale, key):
+def review_page(lang, csrf, fields, share_cents, result, stale, key, agency_cents):
     notice = ""
     if stale:
         notice = '<p class="notice" role="alert">%s</p>' % esc(
@@ -725,7 +725,8 @@ def review_page(lang, csrf, fields, share_cents, result, stale, key):
             esc(format_date(fields.get("escritura_date", "2026-11-15"), lang) + " · " + format_month(forecast_month_from_date(fields.get("escritura_date", "2026-11-15")), lang)),
             esc(i18n.text(lang, "st_" + fields.get("stage", "potencial"))
                 if fields.get("stage") in STAGES else ""),
-            figures_list(lang, share_cents, result),
+            figures_list(lang, share_cents, result, agency_cents)
+            + '<p class="field-help" data-i18n="rev_expenses_note">%s</p>' % esc(i18n.text(lang, "rev_expenses_note")),
             esc(csrf), hidden, shown, esc(key),
             esc(i18n.text(lang, "btn_confirm")),
         )
@@ -782,7 +783,7 @@ def forecast_section(lang, month, deals, expenses_cents, estimated=False):
     return (
         "<section><h2>%s</h2>"
         "<dl>"
-        '<dt data-i18n="m_commission">%s</dt><dd>%s</dd>'
+        '<dt data-i18n="m_share">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_bank">%s</dt><dd>%s</dd>'
         '<dt data-i18n="m_set_aside">%s</dt><dd>%s</dd>'
         '<dd class="money-breakdown">%s %s \u00b7 %s %s \u00b7 %s %s</dd>'
@@ -792,7 +793,7 @@ def forecast_section(lang, month, deals, expenses_cents, estimated=False):
         '<h3 data-i18n="m_deals">%s</h3><table class="deal-table"><thead><tr><th data-i18n="th_name">%s</th><th data-i18n="th_stage">%s</th><th data-i18n="th_amount">%s</th><th data-i18n="th_escritura">%s</th><th data-i18n="th_cpcv">%s</th></tr></thead><tbody>%s</tbody></table>%s</section>'
         % (
             esc(format_month(month, lang)),
-            esc(i18n.text(lang, "m_commission")),
+            esc(i18n.text(lang, "m_share")),
             esc(format_amount(result["commission"], lang)),
             esc(i18n.text(lang, "m_bank")),
             esc(format_amount(result["bank_inflow"], lang)),
@@ -1216,11 +1217,27 @@ def expense_edit_page(lang, csrf, expense_id, values, errors, deals):
            expense_id, esc(csrf), esc(i18n.text(lang, "exp_delete"))))
 
 
-def deal_expenses_section(lang, items):
+def deal_net(deal, items):
+    """(what the deal leaves, its linked expenses, really yours from this deal), in cents via engine.calc."""
+    own = month_figures([deal], 0)
+    leaves = own["bank_inflow"] - own["protected_money"]
+    linked = sum(e["amount_cents"] for e in items)
+    return leaves, linked, leaves - linked
+
+
+def deal_expenses_section(lang, deal, items):
     body = expense_items(lang, items, []) if items else '<p data-i18n="exp_deal_none">%s</p>' % esc(
         i18n.text(lang, "exp_deal_none"))
-    return '<section class="dash-card deal-expenses"><h2 data-i18n="exp_deal_title">%s</h2>%s</section>' % (
-        esc(i18n.text(lang, "exp_deal_title")), body)
+    leaves, linked, really = deal_net(deal, items)
+    figures = ('<dl class="deal-net"><dt data-i18n="deal_leaves">%s</dt><dd>%s</dd>'
+               '<dt data-i18n="deal_linked">%s</dt><dd>%s</dd>'
+               '<dt data-i18n="deal_really">%s</dt><dd><b class="%s">%s</b></dd></dl>'
+               % (esc(i18n.text(lang, "deal_leaves")), esc(format_amount(leaves, lang)),
+                  esc(i18n.text(lang, "deal_linked")), esc(format_amount(linked, lang)),
+                  esc(i18n.text(lang, "deal_really")), "dash-neg" if really < 0 else "",
+                  esc(format_amount(really, lang))))
+    return '<section class="dash-card deal-expenses"><h2 data-i18n="exp_deal_title">%s</h2>%s%s</section>' % (
+        esc(i18n.text(lang, "exp_deal_title")), figures, body)
 
 
 def edit_form_html(lang, csrf, deal_id, values, errors):
@@ -1940,8 +1957,8 @@ def application(environ, start_response):
             return respond("200 OK", body)
         share_cents = agent_share(parsed["commission_cents"],
                                   parsed["share_rate"])
-        result = single_figures(share_cents, settings,
-                                expense_rule(session["tenant_id"])(parsed["month"])[0])
+        # One deal's own figures: expenses belong to months and are deducted in the forecast.
+        result = single_figures(share_cents, settings, 0)
         key = secrets.token_urlsafe(16)
         shown = {
             "name": parsed["name"],
@@ -1958,7 +1975,7 @@ def application(environ, start_response):
         }
         body = page(lang, session["csrf"], i18n.text(lang, "rev_title"),
                     review_page(lang, session["csrf"], shown, share_cents,
-                                result, False, key), signed_in=True)
+                                result, False, key, parsed["commission_cents"]), signed_in=True)
         return respond("200 OK", body)
 
     if path == "/deals/confirm" and method == "POST":
@@ -1988,8 +2005,8 @@ def application(environ, start_response):
             return respond("200 OK", body)
         share_cents = agent_share(parsed["commission_cents"],
                                   parsed["share_rate"])
-        result = single_figures(share_cents, settings,
-                                expense_rule(session["tenant_id"])(parsed["month"])[0])
+        # One deal's own figures: expenses belong to months and are deducted in the forecast.
+        result = single_figures(share_cents, settings, 0)
         try:
             shown = {
                 "share": int(fields.get("shown_share", "-1")),
@@ -2022,7 +2039,7 @@ def application(environ, start_response):
             body = page(
                 lang, session["csrf"], i18n.text(lang, "rev_title"),
                 review_page(lang, session["csrf"], shown_fields, share_cents,
-                            result, True, secrets.token_urlsafe(16)), signed_in=True)
+                            result, True, secrets.token_urlsafe(16), parsed["commission_cents"]), signed_in=True)
             return respond("200 OK", body)
         store.insert_deal(DB_PATH, {
             "name": parsed["name"],
@@ -2072,7 +2089,7 @@ def application(environ, start_response):
             pass
         body = page(lang, session["csrf"], i18n.text(lang, "deal_edit_title"),
                     edit_form_html(lang, session["csrf"], did, values, {})
-                    + deal_expenses_section(lang, store.list_expenses(DB_PATH, session["tenant_id"], deal_id=did)),
+                    + deal_expenses_section(lang, deal, store.list_expenses(DB_PATH, session["tenant_id"], deal_id=did)),
                     "/deals/edit", signed_in=True)
         return respond("200 OK", body)
 
