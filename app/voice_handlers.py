@@ -284,6 +284,20 @@ def refusal_diagnostic(query, wav):
             "duration_seconds": None, "peak": None}
 
 
+def early_refusal_diagnostic(query, wav):
+    """The diagnostic of an early refusal (no saved settings, the daily
+    limit), which happens before the WAV is validated: only a complete,
+    valid WAV is measured (owner's ruling extending V3's option C to these
+    paths); an invalid or truncated body reports duration and peak as
+    unavailable — null, shown as a dash. Nothing is stored, written or
+    logged.
+    """
+    ok, _reason = voice_mod.validate_wav(wav)
+    if not ok:
+        return refusal_diagnostic(query, wav)
+    return recording_diagnostic(query, wav)
+
+
 def handle_audio(env, query, wav):
     """A raw WAV body: checked, transcribed, then handled as typed text.
 
@@ -296,11 +310,11 @@ def handle_audio(env, query, wav):
     if conv is None:
         first = settings_first(env, lang)
         if first is not None:
-            first["diagnostic"] = recording_diagnostic(query, wav)
+            first["diagnostic"] = early_refusal_diagnostic(query, wav)
             return first
     if conv is None and store.voice_limit_reached(env.db, env.tenant):
         return _payload(None, "ended", lang, message=_t(lang, "voice_limit_reached"),
-                        diagnostic=recording_diagnostic(query, wav))
+                        diagnostic=early_refusal_diagnostic(query, wav))
     ok, _reason = voice_mod.validate_wav(wav)
     if not ok:
         # A refused body is never measured (owner's V3 ruling, option C):

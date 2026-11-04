@@ -316,9 +316,10 @@ class RealServerMicrophoneAndConfirmJourney(RealServerTestCase):
 
 class RealServerRefusalDiagnostic(RealServerTestCase):
     """The owner's V3 ruling over real HTTP: a truncated or invalid body is
-    unavailable — duration and peak are both null, shown as dashes — while the
-    over-limit branch keeps today's behaviour (duration from the header, peak
-    null, body not read)."""
+    unavailable — duration and peak are both null, shown as dashes — on every
+    refusal path, including the early ones (no saved settings, the daily
+    limit), while the over-limit branch keeps today's behaviour (duration
+    from the header, peak null, body not read)."""
 
     def transcribe(self, wav, lang="en-GB"):
         b = self.browser
@@ -363,6 +364,70 @@ class RealServerRefusalDiagnostic(RealServerTestCase):
         self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
                                               "duration_seconds": 62.0,
                                               "peak": None})
+
+    # The owner's ruling at seq 7462 extends to the early refusal paths: an
+    # agent without saved settings or one over the daily limit who posts an
+    # invalid or truncated body gets the same unavailable numbers — duration
+    # and peak both null — never a measurement of a body the server refuses.
+
+    def test_without_settings_an_invalid_body_over_http_reports_duration_and_peak_null(self):
+        # AppTestCase-level sign-in only; no save_settings, so the U4
+        # settings-first line must come back with the null diagnostic.
+        self.sign_in("no-settings-invalid@example.com", "en-GB")
+        invalid = bytearray(spoken_tone_wav(1, 0.5))
+        invalid[0:4] = b"NOPE"
+        data = self.transcribe(bytes(invalid))
+        self.assertEqual(data["state"], "settings_first")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_settings_first"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_without_settings_a_truncated_body_over_http_reports_duration_and_peak_null(self):
+        self.sign_in("no-settings-truncated@example.com", "en-GB")
+        truncated = spoken_tone_wav(1, 0.5)[:-2000]
+        declared = struct.unpack_from("<I", truncated, 40)[0]
+        self.assertEqual(declared, 32000)
+        data = self.transcribe(truncated)
+        self.assertEqual(data["state"], "settings_first")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_over_the_daily_limit_an_invalid_body_over_http_reports_duration_and_peak_null(self):
+        self.sign_in("limit-invalid@example.com", "en-GB")
+        self.save_settings("en-GB")
+        tenant = self.tenant("limit-invalid@example.com")
+        for _ in range(store.VOICE_DAILY_LIMIT):
+            self.assertTrue(store.check_voice_limit(self.db, tenant))
+        invalid = bytearray(spoken_tone_wav(1, 0.5))
+        invalid[0:4] = b"NOPE"
+        data = self.transcribe(bytes(invalid))
+        self.assertEqual(data["state"], "ended")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_limit_reached"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
+
+    def test_over_the_daily_limit_a_truncated_body_over_http_reports_duration_and_peak_null(self):
+        self.sign_in("limit-truncated@example.com", "en-GB")
+        self.save_settings("en-GB")
+        tenant = self.tenant("limit-truncated@example.com")
+        for _ in range(store.VOICE_DAILY_LIMIT):
+            self.assertTrue(store.check_voice_limit(self.db, tenant))
+        truncated = spoken_tone_wav(1, 0.5)[:-2000]
+        declared = struct.unpack_from("<I", truncated, 40)[0]
+        self.assertEqual(declared, 32000)
+        data = self.transcribe(truncated)
+        self.assertEqual(data["state"], "ended")
+        self.assertEqual(data["message"], i18n.text("en-GB", "voice_limit_reached"))
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": None,
+                                              "peak": None})
+        self.assertEqual(store.count_deals(self.db), 0)
 
 
 if __name__ == "__main__":
