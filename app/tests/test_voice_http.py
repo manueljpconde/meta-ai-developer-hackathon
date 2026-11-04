@@ -121,12 +121,15 @@ def wav_with_a_data_chunk_that_understates_the_body():
 
 def wav_with_a_valid_chunk_after_the_data_chunk():
     """A complete, valid WAV whose data chunk is followed by a well-formed
-    LIST chunk: every byte of the body is accounted for by a valid RIFF
-    chunk, so this one is still measured (half a second, the declared
-    data length)."""
+    LIST chunk: the INFO list type, then subchunks — one odd-sized with its
+    pad byte, one even — that account exactly for the LIST's declared size.
+    Every byte of the body is accounted for by a valid RIFF chunk, so this
+    one is still measured (half a second, the declared data length)."""
     wav = bytearray(spoken_tone_wav(1, 0.5))
     audio = bytes(wav[44:44 + 16000])
-    extra = b"LIST" + struct.pack("<I", 6) + b"INFOxy"
+    extra = (b"LIST" + struct.pack("<I", 28) + b"INFO" +
+             b"IART" + struct.pack("<I", 3) + b"abc\x00" +
+             b"INAM" + struct.pack("<I", 4) + b"abcd")
     return (b"RIFF" + struct.pack("<I", 36 + 16000 + len(extra)) + b"WAVE" +
             b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16) +
             b"data" + struct.pack("<I", 16000) + audio + extra)
@@ -161,6 +164,19 @@ def wav_with_a_list_chunk_missing_its_list_type():
     which is absent, so the container is invalid."""
     wav = bytearray(spoken_tone_wav(1, 0.5))
     wav += b"LIST" + struct.pack("<I", 0)
+    struct.pack_into("<I", wav, 4, len(wav) - 8)
+    return bytes(wav)
+
+
+def wav_with_a_truncated_subchunk_inside_a_list_chunk():
+    """QA's no_go on version 4 (seq 7708): a valid WAV followed by a LIST
+    chunk whose INAM subchunk declares 100 payload bytes but contains only
+    four. The LIST container holds only 12 bytes after its type, so a
+    subchunk that overruns its container makes the whole body invalid,
+    however correct the sizes around it are."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    wav += (b"LIST" + struct.pack("<I", 16) + b"INFO" +
+            b"INAM" + struct.pack("<I", 100) + b"abcd")
     struct.pack_into("<I", wav, 4, len(wav) - 8)
     return bytes(wav)
 
@@ -665,10 +681,13 @@ class RealServerRefusalDiagnostic(RealServerTestCase):
     # QA's no_go on version 3 (seq 7663): the trailing chunk walk checked
     # only sizes and offsets, so a purported chunk with a four-NUL
     # identifier, or a LIST chunk without its required four-byte list
-    # type, was still measured on both early refusal paths. The complete
-    # chunk structure is validated: a following chunk is valid only with a
-    # proper RIFF FourCC identifier, and a LIST chunk only with its list
-    # type present.
+    # type, was still measured on both early refusal paths. QA's no_go on
+    # version 4 (seq 7708) extended it: a LIST whose INAM subchunk
+    # declares 100 payload bytes but contains four was measured too. The
+    # complete chunk structure is validated: a following chunk is valid
+    # only with a proper RIFF FourCC identifier, and a LIST chunk only
+    # when its payload is its four-byte list type followed by subchunks
+    # that account exactly for it.
 
     MALFORMED_TRAILING = (
         ("a trailing chunk with a NUL identifier",
@@ -677,6 +696,8 @@ class RealServerRefusalDiagnostic(RealServerTestCase):
          "wav_with_a_list_chunk_missing_its_list_type"),
         ("a malformed chunk between fmt and data",
          "wav_with_a_malformed_chunk_between_fmt_and_data"),
+        ("a truncated subchunk inside a LIST chunk",
+         "wav_with_a_truncated_subchunk_inside_a_list_chunk"),
     )
 
     def test_without_settings_a_malformed_trailing_chunk_reports_duration_and_peak_null(self):

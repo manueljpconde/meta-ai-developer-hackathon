@@ -31,6 +31,37 @@ MAX_AUDIO_BYTES = 16000 * 2 * MAX_AUDIO_SECONDS  # audio bytes of 60 s, mono 16-
 WAV_HEADER_SIZE = 44
 
 
+def _valid_fourcc(chunk_id):
+    """A RIFF chunk identifier: four printable ASCII bytes."""
+    return not any(b < 0x20 or b > 0x7E for b in chunk_id)
+
+
+def _valid_list_payload(data, start, size):
+    """The payload of a LIST chunk: its four-byte list type followed by
+    subchunks that account exactly for the rest of it. Each subchunk
+    carries a proper printable FourCC and a size that stays inside the
+    LIST container — a subchunk that overruns it (QA's truncated INAM)
+    makes the whole body invalid, and so does a payload the subchunks do
+    not exactly fill."""
+    if size < 4:
+        return False
+    offset = start + 4  # past the list type
+    end = start + size
+    while offset < end:
+        # The subchunk header must sit whole inside both the LIST payload
+        # and the body; a LIST that declares more than the body holds is
+        # malformed, not walked past the end.
+        if offset + 8 > end or offset + 8 > len(data):
+            return False
+        if not _valid_fourcc(data[offset:offset + 4]):
+            return False
+        sub_size = struct.unpack_from("<I", data, offset + 4)[0]
+        offset += 8 + sub_size + (sub_size & 1)
+        if offset > end:
+            return False
+    return offset == end
+
+
 def validate_wav(data):
     """Check the WAV container end to end: RIFF/WAVE, PCM, mono, 16-bit,
     16000 Hz, a size accounting that matches the body actually present and
@@ -74,8 +105,9 @@ def validate_wav(data):
         return False, "riff_size"
     # The data chunk follows the fmt chunk (chunks are padded to even sizes).
     # Every chunk between them must be a valid RIFF chunk: a proper printable
-    # FourCC identifier, and a LIST chunk with its four-byte list type, the
-    # same rule the trailing walk enforces after the data payload.
+    # FourCC identifier, and a LIST chunk whose payload is its four-byte list
+    # type followed by well-formed subchunks — the same rules the trailing
+    # walk enforces after the data payload.
     # The duration is the larger of what the data chunk declares and the audio
     # bytes actually present, so an understating header cannot pass the cap.
     offset = 20 + fmt_size + (fmt_size & 1)
@@ -83,9 +115,9 @@ def validate_wav(data):
     while offset + 8 <= len(data):
         chunk_id = data[offset:offset + 4]
         chunk_size = struct.unpack_from("<I", data, offset + 4)[0]
-        if any(b < 0x20 or b > 0x7E for b in chunk_id):
+        if not _valid_fourcc(chunk_id):
             return False, "structure"
-        if chunk_id == b"LIST" and chunk_size < 4:
+        if chunk_id == b"LIST" and not _valid_list_payload(data, offset + 8, chunk_size):
             return False, "structure"
         if chunk_id == b"data":
             declared = chunk_size
@@ -110,17 +142,19 @@ def validate_wav(data):
     # following RIFF chunk, and the walk must end exactly at the end of
     # the body. A valid chunk carries a proper FourCC identifier — four
     # printable ASCII bytes, not NULs or other control bytes — and a LIST
-    # chunk begins with its required four-byte list type, so a LIST size
-    # below four is malformed. Raw audio the data chunk does not declare
-    # is not a chunk: a data size that understates the body is an invalid
-    # container, and so is a container cut off inside a later chunk.
+    # chunk's payload is its required four-byte list type followed by
+    # subchunks that account exactly for it, so a LIST size below four or
+    # a subchunk that overruns its container is malformed. Raw audio the
+    # data chunk does not declare is not a chunk: a data size that
+    # understates the body is an invalid container, and so is a container
+    # cut off inside a later chunk.
     tail = offset + declared + (declared & 1)
     while tail + 8 <= len(data):
         chunk_id = data[tail:tail + 4]
         chunk_size = struct.unpack_from("<I", data, tail + 4)[0]
-        if any(b < 0x20 or b > 0x7E for b in chunk_id):
+        if not _valid_fourcc(chunk_id):
             return False, "structure"
-        if chunk_id == b"LIST" and chunk_size < 4:
+        if chunk_id == b"LIST" and not _valid_list_payload(data, tail + 8, chunk_size):
             return False, "structure"
         tail += 8 + chunk_size + (chunk_size & 1)
     if tail != len(data):
