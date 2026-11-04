@@ -132,6 +132,50 @@ def wav_with_a_valid_chunk_after_the_data_chunk():
             b"data" + struct.pack("<I", 16000) + audio + extra)
 
 
+def wav_with_another_valid_chunk_after_the_data_chunk():
+    """A complete, valid WAV whose data chunk is followed by a well-formed
+    chunk with a different printable FourCC: also still measured."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    audio = bytes(wav[44:44 + 16000])
+    extra = b"id3 " + struct.pack("<I", 4) + b"abcd"
+    return (b"RIFF" + struct.pack("<I", 36 + 16000 + len(extra)) + b"WAVE" +
+            b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16) +
+            b"data" + struct.pack("<I", 16000) + audio + extra)
+
+
+def wav_with_a_chunk_with_a_nul_identifier_after_the_data_chunk():
+    """QA's no_go on version 3 (seq 7663): a valid WAV followed by eight
+    zero bytes, with the outer RIFF size adjusted to the new body length.
+    The trailing bytes purport to be a zero-length chunk whose four-byte
+    identifier is four NULs, not a valid RIFF FourCC, so the container is
+    invalid."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    wav += bytes(8)
+    struct.pack_into("<I", wav, 4, len(wav) - 8)
+    return bytes(wav)
+
+
+def wav_with_a_list_chunk_missing_its_list_type():
+    """QA's no_go on version 3 (seq 7663): a valid WAV followed by a LIST
+    chunk of zero length. A LIST chunk requires its four-byte list type,
+    which is absent, so the container is invalid."""
+    wav = bytearray(spoken_tone_wav(1, 0.5))
+    wav += b"LIST" + struct.pack("<I", 0)
+    struct.pack_into("<I", wav, 4, len(wav) - 8)
+    return bytes(wav)
+
+
+def wav_with_a_malformed_chunk_between_fmt_and_data():
+    """The same rule between the fmt and data chunks: a purported chunk
+    whose four-byte identifier is four NULs is not a valid RIFF chunk,
+    so the container is invalid however well the rest measures."""
+    samples = struct.pack("<16000h", *([16383, -16384] * 8000))
+    junk = bytes(8)
+    return (b"RIFF" + struct.pack("<I", 36 + len(samples) + len(junk)) + b"WAVE" +
+            b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16) +
+            junk + b"data" + struct.pack("<I", len(samples)) + samples)
+
+
 class RealServerTestCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -613,6 +657,98 @@ class RealServerRefusalDiagnostic(RealServerTestCase):
         for _ in range(store.VOICE_DAILY_LIMIT):
             self.assertTrue(store.check_voice_limit(self.db, tenant))
         data = self.transcribe(wav_with_a_valid_chunk_after_the_data_chunk())
+        self.assertEqual(data["state"], "ended")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": 0.5,
+                                              "peak": 0.5})
+
+    # QA's no_go on version 3 (seq 7663): the trailing chunk walk checked
+    # only sizes and offsets, so a purported chunk with a four-NUL
+    # identifier, or a LIST chunk without its required four-byte list
+    # type, was still measured on both early refusal paths. The complete
+    # chunk structure is validated: a following chunk is valid only with a
+    # proper RIFF FourCC identifier, and a LIST chunk only with its list
+    # type present.
+
+    MALFORMED_TRAILING = (
+        ("a trailing chunk with a NUL identifier",
+         "wav_with_a_chunk_with_a_nul_identifier_after_the_data_chunk"),
+        ("a LIST chunk missing its list type",
+         "wav_with_a_list_chunk_missing_its_list_type"),
+        ("a malformed chunk between fmt and data",
+         "wav_with_a_malformed_chunk_between_fmt_and_data"),
+    )
+
+    def test_without_settings_a_malformed_trailing_chunk_reports_duration_and_peak_null(self):
+        for name, factory in self.MALFORMED_TRAILING:
+            with self.subTest(wav=name):
+                mail.OUTBOX = []
+                email = "no-settings-%s@example.com" % factory
+                self.sign_in(email, "en-GB")
+                data = self.transcribe(globals()[factory]())
+                self.assertEqual(data["state"], "settings_first", name)
+                self.assertEqual(data["message"],
+                                 i18n.text("en-GB", "voice_settings_first"), name)
+                self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                                      "duration_seconds": None,
+                                                      "peak": None}, name)
+                self.assertEqual(store.count_deals(self.db), 0, name)
+
+    def test_over_the_daily_limit_a_malformed_trailing_chunk_reports_duration_and_peak_null(self):
+        for name, factory in self.MALFORMED_TRAILING:
+            with self.subTest(wav=name):
+                mail.OUTBOX = []
+                email = "limit-%s@example.com" % factory
+                self.sign_in(email, "en-GB")
+                self.save_settings("en-GB")
+                tenant = self.tenant(email)
+                for _ in range(store.VOICE_DAILY_LIMIT):
+                    self.assertTrue(store.check_voice_limit(self.db, tenant))
+                data = self.transcribe(globals()[factory]())
+                self.assertEqual(data["state"], "ended", name)
+                self.assertEqual(data["message"],
+                                 i18n.text("en-GB", "voice_limit_reached"), name)
+                self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                                      "duration_seconds": None,
+                                                      "peak": None}, name)
+                self.assertEqual(store.count_deals(self.db), 0, name)
+
+    def test_a_malformed_trailing_chunk_is_refused_on_the_normal_path_too(self):
+        for name, factory in self.MALFORMED_TRAILING:
+            with self.subTest(wav=name):
+                mail.OUTBOX = []
+                email = "trailing-%s@example.com" % factory
+                self.sign_in(email, "en-GB")
+                self.save_settings("en-GB")
+                data = self.transcribe(globals()[factory]())
+                self.assertEqual(data["state"], "error", name)
+                self.assertEqual(data["message"],
+                                 i18n.text("en-GB", "voice_wav_error"), name)
+                self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                                      "duration_seconds": None,
+                                                      "peak": None}, name)
+                self.assertEqual(store.count_deals(self.db), 0, name)
+
+    def test_a_wav_with_another_valid_following_chunk_is_still_measured(self):
+        # Over-refusal guard: the identifier rule accepts any printable
+        # RIFF FourCC, so a well-formed non-LIST chunk after the data
+        # chunk keeps the WAV valid and measured on both early paths.
+        mail.OUTBOX = []
+        self.sign_in("no-settings-trailing-other@example.com", "en-GB")
+        data = self.transcribe(wav_with_another_valid_chunk_after_the_data_chunk())
+        self.assertEqual(data["state"], "settings_first")
+        self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
+                                              "duration_seconds": 0.5,
+                                              "peak": 0.5})
+
+        mail.OUTBOX = []
+        email = "limit-trailing-other@example.com"
+        self.sign_in(email, "en-GB")
+        self.save_settings("en-GB")
+        tenant = self.tenant(email)
+        for _ in range(store.VOICE_DAILY_LIMIT):
+            self.assertTrue(store.check_voice_limit(self.db, tenant))
+        data = self.transcribe(wav_with_another_valid_chunk_after_the_data_chunk())
         self.assertEqual(data["state"], "ended")
         self.assertEqual(data["diagnostic"], {"sample_rate": 48000,
                                               "duration_seconds": 0.5,

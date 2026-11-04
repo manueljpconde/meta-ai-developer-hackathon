@@ -73,6 +73,9 @@ def validate_wav(data):
     if riff_size != len(data) - 8:
         return False, "riff_size"
     # The data chunk follows the fmt chunk (chunks are padded to even sizes).
+    # Every chunk between them must be a valid RIFF chunk: a proper printable
+    # FourCC identifier, and a LIST chunk with its four-byte list type, the
+    # same rule the trailing walk enforces after the data payload.
     # The duration is the larger of what the data chunk declares and the audio
     # bytes actually present, so an understating header cannot pass the cap.
     offset = 20 + fmt_size + (fmt_size & 1)
@@ -80,6 +83,10 @@ def validate_wav(data):
     while offset + 8 <= len(data):
         chunk_id = data[offset:offset + 4]
         chunk_size = struct.unpack_from("<I", data, offset + 4)[0]
+        if any(b < 0x20 or b > 0x7E for b in chunk_id):
+            return False, "structure"
+        if chunk_id == b"LIST" and chunk_size < 4:
+            return False, "structure"
         if chunk_id == b"data":
             declared = chunk_size
             offset += 8
@@ -91,23 +98,33 @@ def validate_wav(data):
     # refuse it before any model call, like every other broken header.
     if len(data) - offset < declared:
         return False, "truncated"
-    # Every byte after the declared data payload must belong to a valid
-    # following RIFF chunk (each with its whole 8-byte header and size
-    # present), and the walk must end exactly at the end of the body. Raw
-    # audio the data chunk does not declare is not a chunk: a data size
-    # that understates the body is an invalid container, and so is a
-    # container cut off inside a later chunk.
-    tail = offset + declared + (declared & 1)
-    while tail + 8 <= len(data):
-        chunk_size = struct.unpack_from("<I", data, tail + 4)[0]
-        tail += 8 + chunk_size + (chunk_size & 1)
-    if tail != len(data):
-        return False, "structure"
     # The audio must be a whole number of samples, not a fraction of one.
     if declared % (channels * bits // 8):
         return False, "align"
+    # The 60 s cap counts the larger of what the data chunk declares and
+    # the audio bytes actually present, so an understating header cannot
+    # pass the cap.
     if max(declared, len(data) - offset) > MAX_AUDIO_BYTES:
         return False, "duration"
+    # Every byte after the declared data payload must belong to a valid
+    # following RIFF chunk, and the walk must end exactly at the end of
+    # the body. A valid chunk carries a proper FourCC identifier — four
+    # printable ASCII bytes, not NULs or other control bytes — and a LIST
+    # chunk begins with its required four-byte list type, so a LIST size
+    # below four is malformed. Raw audio the data chunk does not declare
+    # is not a chunk: a data size that understates the body is an invalid
+    # container, and so is a container cut off inside a later chunk.
+    tail = offset + declared + (declared & 1)
+    while tail + 8 <= len(data):
+        chunk_id = data[tail:tail + 4]
+        chunk_size = struct.unpack_from("<I", data, tail + 4)[0]
+        if any(b < 0x20 or b > 0x7E for b in chunk_id):
+            return False, "structure"
+        if chunk_id == b"LIST" and chunk_size < 4:
+            return False, "structure"
+        tail += 8 + chunk_size + (chunk_size & 1)
+    if tail != len(data):
+        return False, "structure"
     return True, ""
 
 
