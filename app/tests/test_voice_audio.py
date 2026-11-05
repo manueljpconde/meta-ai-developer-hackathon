@@ -193,8 +193,9 @@ class ServedScriptRecordingTest(AppTestCase):
         self.assertIn("if (!ctx) { if (fromTap) { micBlocked(); } else { tapToAnswer(); } return; }", listen)
 
     def test_the_audio_goes_to_the_transcription_route_as_wav(self):
-        self.assertIn('"/voice/transcribe?csrf_token="', SCRIPT)
-        self.assertRegex(SCRIPT, r'headers: \{ "Content-Type": "audio/wav" \}, body: wav')
+        self.assertNotIn('"/voice/transcribe?csrf_token="', SCRIPT)
+        self.assertIn('"/voice/transcribe?format=json', SCRIPT)
+        self.assertRegex(SCRIPT, r'headers: \{ "Content-Type": "audio/wav", "X-CSRF-Token": csrf \}, body: wav')
         self.assertIn("sendAudio(encodeWav(samples))", SCRIPT)
 
     def test_the_recording_uses_an_audioworklet_from_the_served_script(self):

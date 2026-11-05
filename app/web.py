@@ -1567,15 +1567,24 @@ def application(environ, start_response):
             has_qs_csrf = "csrf_token" in dict(parse_qsl(qs_raw, keep_blank_values=True))
             header_token = environ.get("HTTP_X_CSRF_TOKEN", "")
             header_ok = header_token == session["csrf"] and header_token != ""
-            if has_qs_csrf or not header_ok:
-                if length < 0 or length > MAX_AUDIO_BODY_BYTES:
-                    # Do not read over-limit body; CSRF failed so no voice
-                    # diagnostic - refuse with 403 and save nothing.
-                    pass
-                else:
-                    # Ensure we do not save anything: do not read further
-                    # than needed and return 403 before any voice handling.
-                    pass
+            csrf_valid = (not has_qs_csrf) and header_ok
+            if length < 0 or length > MAX_AUDIO_BODY_BYTES:
+                if csrf_valid:
+                    refusal = {"state": "error", "lang": lang,
+                               "conversation_id": query.get("conversation_id", ""),
+                               "transcript": "",
+                               "message": i18n.text(lang, "voice_wav_error"),
+                               "diagnostic": {
+                                   "sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
+                                   "duration_seconds": round(max(length - 44, 0) / 32000.0, 2),
+                                   "peak": None}}
+                    if as_json:
+                        return json_reply("200 OK", refusal)
+                    return respond("200 OK", page(
+                        lang, session["csrf"], i18n.text(lang, "voice_falar"),
+                        vh.html_body(refusal, session["csrf"]), signed_in=True))
+                return too_large()
+            if not csrf_valid:
                 if as_json:
                     return json_reply("403 Forbidden", {
                         "state": "error", "lang": lang, "conversation_id": "",

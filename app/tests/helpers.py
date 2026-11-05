@@ -76,7 +76,7 @@ class Client:
         self.accept_language = None
         self.last_set_cookies = []
 
-    def request(self, method, path, params=None, accept_language=None, body=None, content_type=None):
+    def request(self, method, path, params=None, accept_language=None, body=None, content_type=None, headers=None):
         if "?" in path:
             path_info, query = path.split("?", 1)
         else:
@@ -98,6 +98,9 @@ class Client:
             "SERVER_NAME": "localhost",
             "SERVER_PORT": "8000",
         }
+        if headers:
+            for hk, hv in headers.items():
+                env["HTTP_" + hk.upper().replace("-", "_")] = hv
         if self.cookies:
             env["HTTP_COOKIE"] = "; ".join(
                 "%s=%s" % item for item in sorted(self.cookies.items())

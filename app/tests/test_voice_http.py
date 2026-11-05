@@ -57,8 +57,8 @@ class Browser:
             path, data, {"Content-Type": "application/x-www-form-urlencoded"}, accept_language)
         return status, headers, body.decode("utf-8")
 
-    def post_wav(self, path, wav):
-        status, headers, body = self.open(path, wav, {"Content-Type": "audio/wav"})
+    def post_wav(self, path, wav, headers=None):
+        status, headers_, body = self.open(path, wav, {"Content-Type": "audio/wav", **(headers or {})})
         return json.loads(body)
 
 
@@ -357,7 +357,7 @@ class RealServerMicrophoneAndConfirmJourney(RealServerTestCase):
         with stub_clients(extraction, transcription):
             status, page = b.get("/", accept_language="en-GB")
             token = token_in(page)
-            spoken = b.post_wav("/voice/transcribe?format=json&conversation_id=&csrf_token=" + token, wav)
+            spoken = b.post_wav("/voice/transcribe?format=json&conversation_id=", wav, headers={"X-CSRF-Token": token})
             self.assertEqual(spoken["state"], "confirm")
             self.assertEqual(spoken["transcript"], "new deal T2 Mic")
             self.assertEqual(transcription.audio, [wav])
@@ -443,9 +443,8 @@ class RealServerRefusalDiagnostic(RealServerTestCase):
     def transcribe(self, wav, lang="en-GB"):
         b = self.browser
         status, page = b.get("/", accept_language=lang)
-        url = ("/voice/transcribe?format=json&conversation_id=&csrf_token=%s"
-               "&sample_rate=48000" % token_in(page))
-        return b.post_wav(url, wav)
+        url = "/voice/transcribe?format=json&conversation_id=&sample_rate=48000"
+        return b.post_wav(url, wav, headers={"X-CSRF-Token": token_in(page)})
 
     def test_an_invalid_body_over_http_is_refused_with_duration_and_peak_null(self):
         self.sign_in("invalid-body@example.com", "en-GB")
