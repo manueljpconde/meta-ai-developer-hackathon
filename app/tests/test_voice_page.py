@@ -102,8 +102,9 @@ class ScriptBindingsTest(AppTestCase):
                      "v.setUint16(22, 1, true)", "v.setUint32(24, TARGET_RATE, true)", "v.setUint16(34, 16, true)",
                      'str(36, "data")'):
             self.assertIn(part, SCRIPT)
-        self.assertIn('"/voice/transcribe?csrf_token="', SCRIPT)
-        self.assertRegex(SCRIPT, r'headers: \{ "Content-Type": "audio/wav" \}, body: wav')
+        self.assertNotIn('"/voice/transcribe?csrf_token="', SCRIPT)
+        self.assertIn('"/voice/transcribe?format=json', SCRIPT)
+        self.assertRegex(SCRIPT, r'headers: \{ "Content-Type": "audio/wav", "X-CSRF-Token": csrf \}, body: wav')
         self.assertIn("downsample(", SCRIPT)
         self.assertIn("MAX_SECONDS = 55", SCRIPT)
 

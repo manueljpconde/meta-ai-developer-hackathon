@@ -1561,13 +1561,15 @@ def application(environ, start_response):
                 length = int(str(environ.get("CONTENT_LENGTH", "0") or 0).strip())
             except (TypeError, ValueError):
                 length = 0
-            fields = dict(query)
+            # CSRF for audio/JSON path: header only; any csrf_token in
+            # query string is a refusal (even with a valid header), saving nothing.
+            qs_raw = environ.get("QUERY_STRING", "")
+            has_qs_csrf = "csrf_token" in dict(parse_qsl(qs_raw, keep_blank_values=True))
+            header_token = environ.get("HTTP_X_CSRF_TOKEN", "")
+            header_ok = header_token == session["csrf"] and header_token != ""
+            csrf_valid = (not has_qs_csrf) and header_ok
             if length < 0 or length > MAX_AUDIO_BODY_BYTES:
-                if csrf_ok(fields):
-                    # The body is not read: the app must not read an
-                    # over-limit body to measure it. The diagnostic keeps
-                    # the reported sample rate and an estimated duration,
-                    # with peak null (the panel shows a dash).
+                if csrf_valid:
                     refusal = {"state": "error", "lang": lang,
                                "conversation_id": query.get("conversation_id", ""),
                                "transcript": "",
@@ -1582,18 +1584,44 @@ def application(environ, start_response):
                         lang, session["csrf"], i18n.text(lang, "voice_falar"),
                         vh.html_body(refusal, session["csrf"]), signed_in=True))
                 return too_large()
+            if not csrf_valid:
+                if as_json:
+                    return json_reply("403 Forbidden", {
+                        "state": "error", "lang": lang, "conversation_id": "",
+                        "transcript": "", "message": i18n.text(lang, "refused_msg")})
+                return forbidden()
+            # Header accepted; build fields from query without csrf_token.
+            fields = {k: v for k, v in query.items() if k != "csrf_token"}
+            if length < 0 or length > MAX_AUDIO_BODY_BYTES:
+                # The body is not read: the app must not read an
+                # over-limit body to measure it. The diagnostic keeps
+                # the reported sample rate and an estimated duration,
+                # with peak null (the panel shows a dash).
+                refusal = {"state": "error", "lang": lang,
+                           "conversation_id": query.get("conversation_id", ""),
+                           "transcript": "",
+                           "message": i18n.text(lang, "voice_wav_error"),
+                           "diagnostic": {
+                               "sample_rate": voice_audio.clean_rate(query.get("sample_rate")),
+                               "duration_seconds": round(max(length - 44, 0) / 32000.0, 2),
+                               "peak": None}}
+                if as_json:
+                    return json_reply("200 OK", refusal)
+                return respond("200 OK", page(
+                    lang, session["csrf"], i18n.text(lang, "voice_falar"),
+                    vh.html_body(refusal, session["csrf"]), signed_in=True))
             raw = environ.get("wsgi.input").read(length) if length > 0 else b""
         else:
             fields = read_post_form()
             if not isinstance(fields, dict):
                 return fields
             as_json = as_json or fields.get("format") == "json"
-        if not csrf_ok(fields):
-            if as_json:
-                return json_reply("403 Forbidden", {
-                    "state": "error", "lang": lang, "conversation_id": "",
-                    "transcript": "", "message": i18n.text(lang, "refused_msg")})
-            return forbidden()
+            if not csrf_ok(fields):
+                if as_json:
+                    return json_reply("403 Forbidden", {
+                        "state": "error", "lang": lang, "conversation_id": "",
+                        "transcript": "", "message": i18n.text(lang, "refused_msg")})
+                return forbidden()
         env = vh.make_env(DB_PATH, session, lang)
         if route == "/voice/transcribe":
             data = vh.handle_audio(env, fields, raw)

@@ -187,8 +187,8 @@ def tone_wav(seconds, amplitude, rate=16000):
 class RecordingDiagnosticTest(VoiceTestCase):
     def post_audio(self, wav, lang="pt-PT", rate="48000"):
         token = self.page_token(lang)
-        url = "/voice/transcribe?format=json&csrf_token=%s&conversation_id=&sample_rate=%s" % (token, rate)
-        response = self.client.request("POST", url, body=wav, content_type="audio/wav", accept_language=lang)
+        url = "/voice/transcribe?format=json&conversation_id=&sample_rate=%s" % rate
+        response = self.client.request("POST", url, body=wav, content_type="audio/wav", headers={"X-CSRF-Token": token}, accept_language=lang)
         self.assertEqual(response.code, 200)
         return json.loads(response.body)
 
@@ -290,8 +290,8 @@ class RecordingDiagnosticTest(VoiceTestCase):
     def test_a_body_over_the_limit_is_refused_with_the_numbers_it_can_give(self):
         token = self.page_token()
         body = b"\x00" * (16000 * 2 * 61 + 5000)
-        url = "/voice/transcribe?format=json&csrf_token=%s&sample_rate=48000" % token
-        response = self.client.request("POST", url, body=body, content_type="audio/wav")
+        url = "/voice/transcribe?format=json&sample_rate=48000"
+        response = self.client.request("POST", url, body=body, content_type="audio/wav", headers={"X-CSRF-Token": token})
         data = json.loads(response.body)
         self.assertEqual((data["state"], data["diagnostic"]["sample_rate"]), ("error", 48000))
         self.assertGreater(data["diagnostic"]["duration_seconds"], 60)
@@ -299,7 +299,7 @@ class RecordingDiagnosticTest(VoiceTestCase):
         self.assertIsNone(data["diagnostic"]["peak"])
         # the same holds for a complete, valid but over-limit WAV
         response = self.client.request("POST", url, body=tone_wav(62, 0.5),
-                                       content_type="audio/wav")
+                                       content_type="audio/wav", headers={"X-CSRF-Token": token})
         data = json.loads(response.body)
         self.assertEqual(data["state"], "error")
         self.assertEqual(data["diagnostic"]["sample_rate"], 48000)
@@ -463,8 +463,8 @@ class SettingsFirstTest(AppTestCase):
                     typed = self.post("/voice/extract", lang, text="novo negócio T1", conversation_id="")
                     token = self.token(lang)
                     spoken = self.client.request(
-                        "POST", "/voice/transcribe?format=json&csrf_token=%s" % token, body=make_wav(1),
-                        content_type="audio/wav", accept_language=lang)
+                        "POST", "/voice/transcribe?format=json", body=make_wav(1),
+                        content_type="audio/wav", headers={"X-CSRF-Token": token}, accept_language=lang)
                 self.assertEqual((extraction.calls, transcription.audio), ([], []))
                 for data in (typed, json.loads(spoken.body)):
                     self.assertEqual((data["state"], data["message"], data["link"], data["link_text"]),

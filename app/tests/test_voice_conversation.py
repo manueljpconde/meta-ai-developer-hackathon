@@ -222,8 +222,8 @@ class StopsTest(VoiceTestCase):
                 token = self.page_token(page_lang)
                 typed = self.voice("/voice/extract", token, page_lang, text="novo T1")
                 audio = self.client.request(
-                    "POST", "/voice/transcribe?format=json&csrf_token=" + token, body=make_wav(1),
-                    content_type="audio/wav", accept_language=page_lang)
+                    "POST", "/voice/transcribe?format=json", body=make_wav(1),
+                    content_type="audio/wav", headers={"X-CSRF-Token": token}, accept_language=page_lang)
             self.assertEqual(typed["message"], message)
             self.assertEqual(json.loads(audio.body)["message"], message)
             self.assertEqual((extraction.calls, transcription.audio), ([], []))
@@ -795,8 +795,8 @@ class TypedConversationTest(VoiceTestCase):
 
 class SpokenConversationTest(VoiceTestCase):
     def post_audio(self, token, wav, lang="pt-PT", cid=""):
-        url = "/voice/transcribe?format=json&csrf_token=%s&conversation_id=%s" % (token, cid)
-        response = self.client.request("POST", url, body=wav, content_type="audio/wav", accept_language=lang)
+        url = "/voice/transcribe?format=json&conversation_id=%s" % cid
+        response = self.client.request("POST", url, body=wav, content_type="audio/wav", headers={"X-CSRF-Token": token}, accept_language=lang)
         self.assertEqual(response.code, 200, response.body[:300])
         return json.loads(response.body)
 
@@ -1069,8 +1069,8 @@ class SpokenFullConversationTest(VoiceTestCase):
     """The full new-deal conversation with two missing fields, spoken: every turn is a WAV body."""
 
     def post_audio(self, token, wav, lang, cid=""):
-        url = "/voice/transcribe?format=json&csrf_token=%s&conversation_id=%s" % (token, cid)
-        response = self.client.request("POST", url, body=wav, content_type="audio/wav", accept_language=lang)
+        url = "/voice/transcribe?format=json&conversation_id=%s" % cid
+        response = self.client.request("POST", url, body=wav, content_type="audio/wav", headers={"X-CSRF-Token": token}, accept_language=lang)
         self.assertEqual(response.code, 200, response.body[:300])
         return json.loads(response.body)
 
