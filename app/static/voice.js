@@ -307,12 +307,11 @@
 
   function sendAudio(wav) {
     setBusy(true);
-    var url = "/voice/transcribe?csrf_token=" + encodeURIComponent(csrf) +
-      "&format=json&conversation_id=" + encodeURIComponent(convId.value) +
+    var url = "/voice/transcribe?format=json&conversation_id=" + encodeURIComponent(convId.value) +
       "&sample_rate=" + encodeURIComponent(Math.round(recRate));
     fetch(url, {
       method: "POST", credentials: "same-origin",
-      headers: { "Content-Type": "audio/wav" }, body: wav
+      headers: { "Content-Type": "audio/wav", "X-CSRF-Token": csrf }, body: wav
     }).then(readAnswer).then(render, failed);
   }
 
